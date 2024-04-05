@@ -287,6 +287,6 @@ tar:
 	(cd /tmp; tar cf - xv6) | gzip >xv6-rev10.tar.gz  # the next one will be 10 (9/17)
 
 submission:
-	git diff --name-only project2_tag HEAD | xargs tar -cf xv6_submission.tar
+	tar -cvf xv6_submission.tar *.c *.h *.S
 
 .PHONY: dist-test dist submission
