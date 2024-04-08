@@ -77,6 +77,29 @@ sys_sleep(void)
   return 0;
 }
 
+int
+sys_nice(void)
+{
+  int v;
+  if(argint(0, &v) < 0)
+    return -1;
+  return nice(v);
+}
+
+int
+sys_ps(void)
+{
+  ps();
+  return 0; 
+}
+
+int
+sys_yield(void)
+{
+  yield();
+  return 0;
+}
+
 // return how many clock tick interrupts have occurred
 // since start.
 int

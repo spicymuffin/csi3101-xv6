@@ -144,6 +144,9 @@ userinit(void)
   p->cwd = namei("/");
   p->ticks = 0;
 
+  // initialize priority of process to 2
+  p->priority = 2;
+
   // this assignment to p->state lets other cores
   // run this process. the acquire forces the above
   // writes to be visible, and the lock is also needed
@@ -200,6 +203,10 @@ fork(void)
   }
   np->sz = curproc->sz;
   np->parent = curproc;
+  
+  // inherit priority from parent
+  np->priority = curproc->priority;
+  
   *np->tf = *curproc->tf;
 
   // Clear %eax so that fork returns 0 in the child.
@@ -313,6 +320,105 @@ wait(void)
   }
 }
 
+int
+nice(int v)
+{
+  struct proc *curproc = myproc();
+  int currvalue = curproc->priority;
+  currvalue += v;
+  if(currvalue > 4){
+    currvalue = 4;
+  }
+  else if(currvalue < -5){
+    currvalue = -5;
+  }
+  curproc->priority = currvalue;
+  return currvalue;
+}
+
+int
+getdigitcnt(int n)
+{
+  int cnt = 0;
+  if (n < 0){
+    cnt++;
+    n *= -1;
+  }
+  while (n > 0){
+    n /= 10;
+    cnt++;
+  }
+  return cnt;
+}
+
+// this WILL BREAK if given invalid cstring
+int
+getcstrchrcnt(char *cstr)
+{
+  int cnt = 0;
+  while (*(cstr+cnt) != '\0'){
+    cnt++;
+  }
+  return cnt;
+}
+
+int
+ps(void)
+{
+  struct proc *p;
+  int fieldlen = 8;
+
+  extern uint ticks;
+  cprintf("name    pid     state   nice    ticks   ticks: %d\n", ticks);
+
+  acquire(&ptable.lock);
+
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->state == SLEEPING || 
+       p->state == RUNNABLE ||
+       p->state == RUNNING  ||
+       p->state == ZOMBIE   ){
+      
+      // name
+      cprintf("%s", p->name);
+      for (int i = 0; i < fieldlen - getcstrchrcnt(p->name); i++){
+        cprintf(" ");
+      }
+
+      // pid
+      cprintf("%d", p->pid);
+      for (int i = 0; i < fieldlen - getdigitcnt(p->pid); i++){
+        cprintf(" ");
+      }
+
+      // state
+      cprintf("%d", p->state);
+      for (int i = 0; i < fieldlen - getdigitcnt(p->state); i++){
+        cprintf(" ");
+      }
+
+      // priority (nice)
+      cprintf("%d", p->priority);
+      for (int i = 0; i < fieldlen - getdigitcnt(p->priority); i++){
+        cprintf(" ");
+      }
+
+      // ticks
+      cprintf("%d", p->ticks);
+      for (int i = 0; i < fieldlen - getdigitcnt(p->ticks); i++){
+        cprintf(" ");
+      }
+
+      cprintf("\n");
+    }
+  }
+
+  release(&ptable.lock);
+  return 0;
+}
+
+
+
 //PAGEBREAK: 42
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
@@ -390,6 +496,8 @@ yield(void)
   acquire(&ptable.lock);  //DOC: yieldlock
   myproc()->state = RUNNABLE;
   sched();
+  extern uint ticks;
+  cprintf("[proc pid: %d, name: %s] yielded. tick: %d\n", myproc()->pid, myproc()->name, ticks);
   release(&ptable.lock);
 }
 

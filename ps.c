@@ -4,14 +4,15 @@
 
 int main(int argc, char** argv)
 {
-	unsigned int i;
-	int sum=0;
-	for (i=0; i< 1000000000; ++i)
-		sum += i;
-	printf(1, "%d\n", sum);
+	// hello like why???
+	// unsigned int i;
+	// int sum=0;
+	// for (i=0; i< 1000000000; ++i)
+	// 	sum += i;
+	// printf(1, "%d\n", sum);
 
 	//uncomment the following line when your ps system call is ready
-	//ps(); 
+	ps();
 	exit();
 }
 
