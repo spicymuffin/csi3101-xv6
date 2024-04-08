@@ -203,6 +203,7 @@ fork(void)
   }
   np->sz = curproc->sz;
   np->parent = curproc;
+  np->ticks = 0;
   
   // inherit priority from parent
   np->priority = curproc->priority;
