@@ -334,6 +334,9 @@ nice(int v)
     currvalue = -5;
   }
   curproc->priority = currvalue;
+
+  yield(); // go to scheduling by calling yield
+
   return currvalue;
 }
 
@@ -368,9 +371,10 @@ ps(void)
 {
   struct proc *p;
   int fieldlen = 8;
+  int namefieldlen = 16;
 
   extern uint ticks;
-  cprintf("name    pid     state   nice    ticks   ticks: %d\n", ticks);
+  cprintf("name            pid     state   nice    ticks   ticks: %d\n", ticks);
 
   acquire(&ptable.lock);
 
@@ -382,7 +386,7 @@ ps(void)
       
       // name
       cprintf("%s", p->name);
-      for (int i = 0; i < fieldlen - getcstrchrcnt(p->name); i++){
+      for (int i = 0; i < namefieldlen - getcstrchrcnt(p->name); i++){
         cprintf(" ");
       }
 
@@ -429,7 +433,7 @@ ps(void)
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
 void
-scheduler(void)
+old_scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
@@ -449,11 +453,11 @@ scheduler(void)
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
       c->proc = p;
-      switchuvm(p);
+      switchuvm(p); // switch page tables to process
       p->state = RUNNING;
-
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
+  
+      swtch(&(c->scheduler), p->context); 
+      switchkvm(); // switch page tables to kernel
 
       // Process is done running for now.
       // It should have changed its p->state before coming back.
@@ -463,6 +467,70 @@ scheduler(void)
 
   }
 }
+
+// scheduler that makes decisions only looking at 
+// priority values of processes.
+void 
+scheduler(void)
+{
+  struct proc *p;
+  struct cpu *c = mycpu();
+  c->proc = 0;
+
+  for(;;){
+    // enable interrupts on this processor.
+    sti();
+
+    int max_priority = 5; // initialize to "impossibly" low prio
+    struct proc* highest_priority_proc = 0; // process that is chosen bc of its highest priority
+
+    // loop over process table looking for process to run
+    acquire(&ptable.lock);
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      // find highest priority proc
+      if(p->state == RUNNABLE && p->priority <= max_priority){
+        // the priority was higher or equal
+        // but if it was equal and p's pid was higher then ignore, go next
+        if (max_priority == p->priority && highest_priority_proc->pid < p->pid){
+          continue;
+        }
+        max_priority = p->priority;
+        highest_priority_proc = p;
+      }
+    }
+
+    // if highest priority proc is null then there are no runnable processes
+    if (highest_priority_proc == 0){
+      // release ptable lock and gg ff go next
+      release(&ptable.lock);
+      continue;
+    }
+
+    // set p to the highest priority proc
+    p = highest_priority_proc;
+
+    // switch to chosen process.  it is the process's job
+    // to release ptable.lock and then reacquire it
+    // before jumping back to us.
+
+    // set cpu's process to the current found process
+    c->proc = p;
+    
+    switchuvm(p); // switch page tables to process
+    p->state = RUNNING;
+
+    // reference to pointer where to store current context, context to goto
+    swtch(&(c->scheduler), p->context);
+    switchkvm(); // switch page tables to kernel
+
+    // process is done running for now.
+    // it should have changed its p->state before coming back.
+    c->proc = 0;
+    
+    release(&ptable.lock);
+  }
+}
+
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
@@ -478,15 +546,24 @@ sched(void)
   struct proc *p = myproc();
 
   if(!holding(&ptable.lock))
-    panic("sched ptable.lock");
-  if(mycpu()->ncli != 1)
-    panic("sched locks");
+    panic("sched ptable.lock"); // we need to have ptable lock
+  if(mycpu()->ncli != 1){
+    // REMOVE BEFORE SUBMISSION
+    cprintf("panic by ncli: [%d]\n", mycpu()->ncli);
+    panic("sched locks"); // cli depth should be one for some reason?
+  }
   if(p->state == RUNNING)
-    panic("sched running");
-  if(readeflags()&FL_IF)
-    panic("sched interruptible");
+    panic("sched running"); // the processor's process is running, not runnable
+  if(readeflags()&FL_IF) // it gets all flags, isolates only interrupt enable flag
+    panic("sched interruptible"); // if interrupts are enabled panic
+
+  // we save whether interrupts were enabled before pushcli (i hv no idea)
   intena = mycpu()->intena;
+
+  // switches context to another function?
   swtch(&p->context, mycpu()->scheduler);
+
+  // restore cpu interrupts depth for process?
   mycpu()->intena = intena;
 }
 
@@ -497,8 +574,6 @@ yield(void)
   acquire(&ptable.lock);  //DOC: yieldlock
   myproc()->state = RUNNABLE;
   sched();
-  extern uint ticks;
-  cprintf("[proc pid: %d, name: %s] yielded. tick: %d\n", myproc()->pid, myproc()->name, ticks);
   release(&ptable.lock);
 }
 
@@ -572,7 +647,12 @@ wakeup1(void *chan)
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == SLEEPING && p->chan == chan)
-      p->state = RUNNABLE;
+      p->state = RUNNABLE; // sleeping processes are woken up
+                           // but can be sent to sleep again
+                           // when their context is restored
+                           // and ran again just to resume 
+                           // inside sleep() and result in them
+                           // sending themselves to sleep again
 }
 
 // Wake up all processes sleeping on chan.
@@ -581,6 +661,13 @@ wakeup(void *chan)
 {
   acquire(&ptable.lock);
   wakeup1(chan);
+  // after we wakeup everyone ig we should schedule?
+  // don't do this, we are in kernel mode:
+  // myproc()->state = RUNNABLE;
+
+  // we can't just do this, other parts of code need to cleanup before
+  // we can start a scheduling round
+  // sched();
   release(&ptable.lock);
 }
 

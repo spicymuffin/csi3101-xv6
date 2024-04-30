@@ -64,14 +64,19 @@ sys_sleep(void)
 
   if(argint(0, &n) < 0)
     return -1;
-  acquire(&tickslock);
-  ticks0 = ticks;
-  while(ticks - ticks0 < n){
-    if(myproc()->killed){
+  acquire(&tickslock); // how did it know abt tickslock in trap.c???
+  ticks0 = ticks; // sleep start tick cached
+  while(ticks - ticks0 < n){ // while we didnt sleep enough
+    if(myproc()->killed){ // if we were killed while sleeping
       release(&tickslock);
-      return -1;
+      return -1; // exit, release tickslock
     }
-    sleep(&ticks, &tickslock);
+    sleep(&ticks, &tickslock); // sleep (give control to other processes)
+                               // sleep on channel ticks (is this system's total tick count?)
+                               // but mark myself as sleeping
+                               // releases tickslock but reacquires it
+                               // before exiting sleep()
+                               // also starts a scheduling round inside
   }
   release(&tickslock);
   return 0;

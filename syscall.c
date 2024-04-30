@@ -20,8 +20,8 @@ fetchint(uint addr, int *ip)
   struct proc *curproc = myproc();
 
   if(addr >= curproc->sz || addr+4 > curproc->sz)
-    return -1;
-  *ip = *(int*)(addr);
+    return -1; // if out of bound return -1
+  *ip = *(int*)(addr); // cast addr to int* (pointer to int), and dereference
   return 0;
 }
 

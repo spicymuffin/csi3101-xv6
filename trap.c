@@ -26,6 +26,7 @@ tvinit(void)
   initlock(&tickslock, "time");
 }
 
+// intialize interrupt descriptor table
 void
 idtinit(void)
 {
@@ -46,15 +47,26 @@ trap(struct trapframe *tf)
     return;
   }
 
+  int wakeup_flag = 0;
+  if (wakeup_flag == 1){
+    cprintf("alive\n");
+  }
   switch(tf->trapno){
   case T_IRQ0 + IRQ_TIMER:
-    if(cpuid() == 0){
+    if(cpuid() == 0){ // if 0th core
       acquire(&tickslock);
-      ticks++;
+      ticks++; // system ticks++;
 	  if ( myproc() != 0 )
-	    myproc()->ticks++;
-      wakeup(&ticks);
+      // ok uncommenting this breaks with:
+      // unexpected trap 14 from cpu 0 eip 8010603f (cr2=0x14)
+      // lapicid 0: panic: trap
+      // wakeup_flag = 1;
+      // WHY??????????????????
+	    myproc()->ticks++; // this core's ticks++;
+      wakeup(&ticks); // wakeup all processes that are sleeping 
       release(&tickslock);
+      // BUT this is fine apparently
+      wakeup_flag = 1;
     }
     lapiceoi();
     break;
@@ -109,10 +121,22 @@ trap(struct trapframe *tf)
   // Force process to give up CPU on clock tick.
   // If interrupts were on while locks held, would need to check nlock.
   if(myproc() && myproc()->state == RUNNING &&
-     tf->trapno == T_IRQ0+IRQ_TIMER)
-    // yield();
+     tf->trapno == T_IRQ0+IRQ_TIMER){
+    // yield(); for priority scheduler, IRQ doesnt trigger scheduling rounds
+  }
+
+  if (wakeup_flag == 1){
+    if (myproc() != 0){
+      // cprintf("kys\n");
+      yield();
+    }
+    else{
+
+    }
+  }
 
   // Check if the process has been killed since we yielded
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)
     exit();
+  
 }

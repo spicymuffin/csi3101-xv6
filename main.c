@@ -43,6 +43,7 @@ mpenter(void)
 {
   switchkvm();
   seginit();
+  // Local Advanced Programmable Interrupt Controller??? im not touching this....
   lapicinit();
   mpmain();
 }

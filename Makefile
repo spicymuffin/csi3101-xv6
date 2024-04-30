@@ -185,6 +185,8 @@ UPROGS=\
 	_swaptest\
 	_ps\
 	_test\
+	_mlfq_test\
+	_prio_test\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)

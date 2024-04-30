@@ -156,6 +156,7 @@ switchkvm(void)
 void
 switchuvm(struct proc *p)
 {
+  // handle exceptions
   if(p == 0)
     panic("switchuvm: no process");
   if(p->kstack == 0)
@@ -163,7 +164,7 @@ switchuvm(struct proc *p)
   if(p->pgdir == 0)
     panic("switchuvm: no pgdir");
 
-  pushcli();
+  pushcli(); // turn off interrupts
   mycpu()->gdt[SEG_TSS] = SEG16(STS_T32A, &mycpu()->ts,
                                 sizeof(mycpu()->ts)-1, 0);
   mycpu()->gdt[SEG_TSS].s = 0;

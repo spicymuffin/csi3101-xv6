@@ -220,7 +220,7 @@ consoleintr(int (*getc)(void))
         consputc(c);
         if(c == '\n' || c == C('D') || input.e == input.r+INPUT_BUF){
           input.w = input.e;
-          wakeup(&input.r);
+          wakeup(&input.r); // wakeup on keyboardstorke i think
         }
       }
       break;
