@@ -81,8 +81,10 @@ allocproc(void)
   acquire(&ptable.lock);
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == UNUSED)
+    if(p->state == UNUSED){
+      //cprintf("allocproc found unused slot at %d for %s\n", (int)(p - ptable.proc), p->name);
       goto found;
+    }
 
   release(&ptable.lock);
   return 0;
@@ -95,7 +97,7 @@ found:
 
   // Allocate kernel stack.
   if((p->kstack = kalloc()) == 0){
-    p->state = UNUSED;
+    p->state = UNUSED; // failed to kalloc, set to unused and return 0
     return 0;
   }
   sp = p->kstack + KSTACKSIZE;
@@ -145,8 +147,9 @@ userinit(void)
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
   p->ticks = 0;
+  p->telapsed = 0;
 
-  // initialize priority of process to 2
+  // initialize priority of userinit to 2 (MLFQ highest priority)
   p->priority = 2;
 
   // this assignment to p->state lets other cores
@@ -201,14 +204,15 @@ fork(void)
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
-    return -1;
+    return -1; // if failed to fork set to UNUSED, return -1
   }
   np->sz = curproc->sz;
   np->parent = curproc;
   np->ticks = 0;
+  np->telapsed = 0;
   
-  // inherit priority from parent
-  np->priority = curproc->priority;
+  // Rule 3: When a job enters the system, it is placed at the highest priority (2)
+  np->priority = 2;
   
   *np->tf = *curproc->tf;
 
@@ -323,29 +327,35 @@ wait(void)
   }
 }
 
+// nice has no effect
 int
 nice(int v)
 {
-  struct proc *curproc = myproc();
-  int currvalue = curproc->priority;
-  currvalue += v;
-  if(currvalue > 4){
-    currvalue = 4;
-  }
-  else if(currvalue < -5){
-    currvalue = -5;
-  }
-  curproc->priority = currvalue;
+  // struct proc *curproc = myproc();
+  // acquire(&ptable.lock);
+  // int currvalue = curproc->priority;
+  // currvalue += v;
+  // if(currvalue > 4){
+  //   currvalue = 4;
+  // }
+  // else if(currvalue < -5){
+  //   currvalue = -5;
+  // }
+  // curproc->priority = currvalue;
+  // release(&ptable.lock);
 
-  yield(); // go to scheduling by calling yield
+  // yield(); // go to scheduling by calling yield
 
-  return currvalue;
+  return 0;
 }
 
 int
 getdigitcnt(int n)
 {
   int cnt = 0;
+  if (n == 0){
+    return 1;
+  }
   if (n < 0){
     cnt++;
     n *= -1;
@@ -470,8 +480,7 @@ old_scheduler(void)
   }
 }
 
-// scheduler that makes decisions only looking at 
-// priority values of processes.
+// MLFQ scheduler
 void 
 scheduler(void)
 {

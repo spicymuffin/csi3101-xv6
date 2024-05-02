@@ -1,6 +1,8 @@
 {
     "files.associations": {
         "*.py": "python",
-        "limits": "c"
+        "limits": "c",
+        "spinlock.h": "c",
+        "typeinfo": "c"
     }
 }

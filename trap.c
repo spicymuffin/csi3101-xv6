@@ -55,7 +55,10 @@ trap(struct trapframe *tf)
       acquire(&tickslock);
       ticks++; // system ticks++;
 	  if ( myproc() != 0 )
-	    myproc()->ticks++; // this core's ticks++;
+	    myproc()->ticks++; // this proc's ticks++;
+      // if (myproc() != 0){  this makes like 0 sense like hello
+      //   myproc()->telapsed++;
+      // }
       wakeup(&ticks); // wakeup all processes that are sleeping 
       release(&tickslock);
     }
@@ -113,15 +116,20 @@ trap(struct trapframe *tf)
   // If interrupts were on while locks held, would need to check nlock.
   if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER){
-    // yield(); for priority scheduler, IRQ doesnt trigger scheduling rounds
-  }
 
-  // scheduling round if something woke up
-  if (wakeup_flag == 1){
-    if (myproc() != 0){ // we can't be in kernel mode
-      wakeup_flag = 0;
+    myproc()->telapsed++;
+    // Force scheduling round if proc exhausted its
+    // RR timeslice (RRTIMESLICE)
+    if (myproc()->telapsed >= RRTIMESLICE){
+      myproc()->telapsed = 0;
       yield();
     }
+  }
+
+  // Force scheduling round if something woke up
+  if (myproc() && wakeup_flag == 1){
+    wakeup_flag = 0;
+    yield();
   }
 
   // Check if the process has been killed since we yielded
