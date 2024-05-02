@@ -14,6 +14,8 @@ extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
 
+extern int wakeup_flag;
+
 void
 tvinit(void)
 {
@@ -47,26 +49,15 @@ trap(struct trapframe *tf)
     return;
   }
 
-  int wakeup_flag = 0;
-  if (wakeup_flag == 1){
-    cprintf("alive\n");
-  }
   switch(tf->trapno){
   case T_IRQ0 + IRQ_TIMER:
     if(cpuid() == 0){ // if 0th core
       acquire(&tickslock);
       ticks++; // system ticks++;
 	  if ( myproc() != 0 )
-      // ok uncommenting this breaks with:
-      // unexpected trap 14 from cpu 0 eip 8010603f (cr2=0x14)
-      // lapicid 0: panic: trap
-      // wakeup_flag = 1;
-      // WHY??????????????????
 	    myproc()->ticks++; // this core's ticks++;
       wakeup(&ticks); // wakeup all processes that are sleeping 
       release(&tickslock);
-      // BUT this is fine apparently
-      wakeup_flag = 1;
     }
     lapiceoi();
     break;
@@ -125,13 +116,11 @@ trap(struct trapframe *tf)
     // yield(); for priority scheduler, IRQ doesnt trigger scheduling rounds
   }
 
+  // scheduling round if something woke up
   if (wakeup_flag == 1){
-    if (myproc() != 0){
-      // cprintf("kys\n");
+    if (myproc() != 0){ // we can't be in kernel mode
+      wakeup_flag = 0;
       yield();
-    }
-    else{
-
     }
   }
 

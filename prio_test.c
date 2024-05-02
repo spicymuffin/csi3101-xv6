@@ -6,6 +6,7 @@
 void prio_test()
 { 
   int pid;
+  int pid2;
   
   printf(1, "====start of test 0: random processes====\n");
   printf(1, "[child was spawned]\n");
@@ -75,7 +76,7 @@ void prio_test()
     printf(1, "[child started execution]\n");
     printf(1, "[child is doing intensive task...]\n");
     
-    for (int a = 0; a < 10; a++){
+    for (int a = 0; a < 50; a++){
       printf(1, "0");
     }
     printf(1, "\n");
@@ -97,6 +98,54 @@ void prio_test()
     printf(1, "[parent is terminating]\n");
   }
   printf(1, "====end of test 2: testing wakeup() preemptiveness====\n");
+  // cleanup
+  nice(2);
+
+  printf(1, "\n\n\n");
+
+  printf(1, "====start of test 3: testing sleep() as a scheduling point====\n");
+  printf(1, "[child1 is spawned]\n");
+  pid = fork();
+  if (pid == 0) {
+    printf(1, "[child1 started execution]\n");
+    ps();
+    printf(1, "[child1 is setting prio to 3]\n");
+    nice(1);
+    ps();
+    printf(1, "[child1 is exiting]\n");
+    exit();
+  } else {
+    printf(1, "[child2 is spawned]\n");
+    pid2 = fork();
+    if (pid2 == 0) {
+      printf(1, "[child2 started execution]\n");
+      ps();
+      yield();
+      printf(1, "[child2 is setting prio to 4]\n");
+      nice(2);
+      ps();
+      printf(1, "[child2 is going to sleep for 4 ticks]\n");
+      sleep(4);
+      printf(1, "[child2 has woken up from sleep]\n");
+      ps();
+      printf(1, "[child2 is exiting]\n");
+      exit();
+    } 
+    printf(1, "[parent started execution]\n");
+    ps();
+    printf(1, "[parent is setting prio to 0]\n");
+    nice(-2);
+    ps();
+    printf(1, "[parent is sleeping for 1 ticks]\n");
+    sleep(1);
+    printf(1, "[parent has woken up after sleep]\n");
+    ps();
+    printf(1, "[parent is waiting]\n");
+    wait();
+    wait();
+    printf(1, "[parent is terminating]\n");
+  }
+  printf(1, "====end of test 3: testing sleep() as a scheduling point====\n");
   // cleanup
   nice(2);
 }

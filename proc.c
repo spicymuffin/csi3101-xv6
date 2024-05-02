@@ -20,6 +20,8 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
+int wakeup_flag = 0;
+
 void
 pinit(void)
 {
@@ -660,6 +662,7 @@ void
 wakeup(void *chan)
 {
   acquire(&ptable.lock);
+  wakeup_flag = 1;
   wakeup1(chan);
   // after we wakeup everyone ig we should schedule?
   // don't do this, we are in kernel mode:
