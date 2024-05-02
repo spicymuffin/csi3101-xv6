@@ -326,6 +326,7 @@ wait(void)
 int
 nice(int v)
 {
+  acquire(&ptable.lock);
   struct proc *curproc = myproc();
   int currvalue = curproc->priority;
   currvalue += v;
@@ -336,6 +337,7 @@ nice(int v)
     currvalue = -5;
   }
   curproc->priority = currvalue;
+  release(&ptable.lock);
 
   yield(); // go to scheduling by calling yield
 
@@ -346,6 +348,9 @@ int
 getdigitcnt(int n)
 {
   int cnt = 0;
+  if (n == 0){
+    return 1;
+  }
   if (n < 0){
     cnt++;
     n *= -1;
@@ -551,7 +556,7 @@ sched(void)
     panic("sched ptable.lock"); // we need to have ptable lock
   if(mycpu()->ncli != 1){
     // REMOVE BEFORE SUBMISSION
-    cprintf("panic by ncli: [%d]\n", mycpu()->ncli);
+    // cprintf("panic by ncli: [%d]\n", mycpu()->ncli);
     panic("sched locks"); // cli depth should be one for some reason?
   }
   if(p->state == RUNNING)

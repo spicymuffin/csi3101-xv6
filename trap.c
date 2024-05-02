@@ -116,12 +116,9 @@ trap(struct trapframe *tf)
     // yield(); for priority scheduler, IRQ doesnt trigger scheduling rounds
   }
 
-  // scheduling round if something woke up
-  if (wakeup_flag == 1){
-    if (myproc() != 0){ // we can't be in kernel mode
-      wakeup_flag = 0;
-      yield();
-    }
+  // Force scheduling round if something woke up
+  if (myproc() && wakeup_flag == 1){
+    yield();
   }
 
   // Check if the process has been killed since we yielded
