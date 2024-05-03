@@ -27,6 +27,9 @@ int swapread(const char*, int);
 int swapwrite(const char*, int);
 int yield(void);
 int nice(int);
+int frees(void);
+void* mmap(int, int , int, int);
+int munmap(const void*, int);
 
 // ulib.c
 int stat(const char*, struct stat*);

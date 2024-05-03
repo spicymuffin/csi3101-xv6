@@ -107,6 +107,9 @@ extern int sys_swapread(void);
 extern int sys_swapwrite(void);
 extern int sys_nice(void);
 extern int sys_yield(void);
+extern int sys_frees(void);
+extern int sys_mmap(void);
+extern int sys_munmap(void);
 
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -134,6 +137,9 @@ static int (*syscalls[])(void) = {
 [SYS_swapwrite] sys_swapwrite,
 [SYS_nice] sys_nice,
 [SYS_yield] sys_yield,
+[SYS_frees] sys_frees,
+[SYS_mmap] sys_mmap,
+[SYS_munmap] sys_munmap,
 };
 
 void
