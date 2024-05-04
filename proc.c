@@ -626,7 +626,7 @@ sched(void)
     panic("sched ptable.lock"); // we need to have ptable lock
   if(mycpu()->ncli != 1){
     // REMOVE BEFORE SUBMISSION
-    cprintf("panic by ncli: [%d]\n", mycpu()->ncli);
+    // cprintf("panic by ncli: [%d]\n", mycpu()->ncli);
     panic("sched locks"); // cli depth should be one for some reason?
   }
   if(p->state == RUNNING)
