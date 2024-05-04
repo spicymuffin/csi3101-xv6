@@ -6,14 +6,17 @@
 void mlfq_test()
 {
   int pid;
+  int pid2;
 
   printf(1, "====start of test 0: testing essence of round robin====\n");
-  printf(1, "[child is spawned]\n");
+  printf(1, "[child1 is spawned]\n");
   pid = fork();
+  printf(1, "[child2 is spawned]\n");
+  pid2 = fork();
   if (pid == 0) {
-    printf(1, "[child started execution]\n");
+    printf(1, "[child1 started execution]\n");
     ps();
-    printf(1, "[child is performing an intensive task...]\n");
+    printf(1, "[child1 is performing an intensive task...]\n");
     
     for (int a = 0; a < 150; a++){
       volatile unsigned int short_sum = 1;
@@ -21,40 +24,66 @@ void mlfq_test()
       for (j=0; j<2000000; j++) {
         short_sum *= j;
       }
-      printf(1, "c");
+      printf(1, "C");
     }
 
     printf(1, "\n");
 
-    printf(1, "[child has finished the intensive task]\n");
+    printf(1, "[child1 has finished the intensive task]\n");
     ps();
 
-    printf(1, "[child is exiting]\n");
+    printf(1, "[child1 is exiting]\n");
     exit();
 
 
   } else {
-    printf(1, "[parent started execution]\n");
-    ps();
-    printf(1, "[parent is performing an intensive task...]\n");
-    
-    for (int a = 0; a < 150; a++){
-      volatile unsigned int short_sum = 1;
-      unsigned int j;
-      for (j=0; j<2000000; j++) {
-        short_sum *= j;
+    if (pid2 == 0) {
+      printf(1, "[child2 started execution]\n");
+      ps();
+      printf(1, "[child2 is performing an intensive task...]\n");
+      
+      for (int a = 0; a < 150; a++){
+        volatile unsigned int short_sum = 1;
+        unsigned int j;
+        for (j=0; j<2000000; j++) {
+          short_sum *= j;
+        }
+        printf(1, "c");
       }
-      printf(1, "p");
+
+      printf(1, "\n");
+
+      printf(1, "[child2 has finished the intensive task]\n");
+      ps();
+
+      printf(1, "[child2 is exiting]\n");
+      exit();
     }
+    else
+    {
+      printf(1, "[parent started execution]\n");
+      ps();
+      printf(1, "[parent is performing an intensive task...]\n");
+      
+      for (int a = 0; a < 150; a++){
+        volatile unsigned int short_sum = 1;
+        unsigned int j;
+        for (j=0; j<2000000; j++) {
+          short_sum *= j;
+        }
+        printf(1, "p");
+      }
 
-    printf(1, "\n");
+      printf(1, "\n");
 
-    printf(1, "[parent has finished the intensive task]\n");
-    ps();
+      printf(1, "[parent has finished the intensive task]\n");
+      ps();
 
-    printf(1, "[parent is waiting]\n");
-    wait();
-    printf(1, "[parent is terminating]\n");
+      printf(1, "[parent is waiting]\n");
+      wait();
+      wait();
+      printf(1, "[parent is terminating]\n");
+    }
   }
   printf(1, "====end of test 0: testing essence of round robin====\n");
 
@@ -94,7 +123,7 @@ void mlfq_test()
     wait();
     printf(1, "[parent is terminating]\n");
   }
-  printf(1, "====start of test 1: time slice expiration====\n");
+  printf(1, "====end of test 1: time slice expiration====\n");
 
 
 
