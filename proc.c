@@ -322,6 +322,8 @@ wait(void)
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
+        p->priority = 0;
+        p->telapsed = 0;
         p->state = UNUSED;
         release(&ptable.lock);
         return pid;
@@ -701,7 +703,7 @@ sleep(void *chan, struct spinlock *lk)
   p->chan = chan;
   p->state = SLEEPING;
 
-  p->telapsed = 0;
+  p->telapsed = 0; // manuall reset telapsed if getting blocked
   sched();
 
   // Tidy up.
