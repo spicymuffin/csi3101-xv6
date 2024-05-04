@@ -149,8 +149,8 @@ userinit(void)
   p->ticks = 0;
   p->telapsed = 0;
 
-  // initialize priority of userinit to 2 (MLFQ highest priority)
-  p->priority = 2;
+  // initialize priority of userinit to 0 (MLFQ highest priority)
+  p->priority = 0;
 
   // this assignment to p->state lets other cores
   // run this process. the acquire forces the above
@@ -184,6 +184,16 @@ growproc(int n)
   return 0;
 }
 
+void
+yield_no_telapsed_reset(void)
+{
+  acquire(&ptable.lock);
+  myproc()->state = RUNNABLE;
+  sched();
+  release(&ptable.lock);
+}
+
+
 // Create a new process copying p as the parent.
 // Sets up stack to return as if from system call.
 // Caller must set state of returned proc to RUNNABLE.
@@ -211,8 +221,8 @@ fork(void)
   np->ticks = 0;
   np->telapsed = 0;
   
-  // Rule 3: When a job enters the system, it is placed at the highest priority (2)
-  np->priority = 2;
+  // Rule 3: When a job enters the system, it is placed at the highest priority (0)
+  np->priority = 0;
   
   *np->tf = *curproc->tf;
 
@@ -233,6 +243,8 @@ fork(void)
   np->state = RUNNABLE;
 
   release(&ptable.lock);
+
+  yield_no_telapsed_reset();
 
   return pid;
 }
@@ -480,6 +492,13 @@ old_scheduler(void)
   }
 }
 
+int
+findprocslot(struct proc* p)
+{
+  int ret = (int)(p - ptable.proc);
+  return ret;
+}
+
 // MLFQ scheduler
 void 
 scheduler(void)
@@ -488,37 +507,82 @@ scheduler(void)
   struct cpu *c = mycpu();
   c->proc = 0;
 
+  int high_prio_lastrun_pointer = 0;
+
+  int med_prio_lastrun_pointer = 0;
+
+  int low_prio_lastrun_pointer = 0;
+  
+
   for(;;){
+
+    int high_prio_hasrunnable = 0; // do we have a new runnable proc?
+    int med_prio_hasrunnable = 0;
+    int low_prio_hasrunnable = 0;
+
+    struct proc* high_prio_runnable = 0;
+    struct proc* med_prio_runnable = 0;
+    struct proc* low_prio_runnable = 0;
+
     // enable interrupts on this processor.
     sti();
 
-    int max_priority = 5; // initialize to "impossibly" low prio
-    struct proc* highest_priority_proc = 0; // process that is chosen bc of its highest priority
-
-    // loop over process table looking for process to run
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      // find highest priority proc
-      if(p->state == RUNNABLE && p->priority <= max_priority){
-        // the priority was higher or equal
-        // but if it was equal and p's pid was higher then ignore, go next
-        if (max_priority == p->priority && highest_priority_proc->pid < p->pid){
-          continue;
-        }
-        max_priority = p->priority;
-        highest_priority_proc = p;
-      }
-    }
 
-    // if highest priority proc is null then there are no runnable processes
-    if (highest_priority_proc == 0){
-      // release ptable lock and gg ff go next
-      release(&ptable.lock);
-      continue;
+    // we are going to leverage the fact that the ptable has an order
+    // which can act as a RR "queue"
+    int high_prio_pointer = (high_prio_lastrun_pointer + 1) % NPROC;
+    int  med_prio_pointer =  (med_prio_lastrun_pointer + 1) % NPROC;
+    int  low_prio_pointer =  (low_prio_lastrun_pointer + 1) % NPROC;
+    
+    for(int i = 0; i < NPROC; i++){
+
+      if(ptable.proc[high_prio_pointer].state == RUNNABLE){
+        if(ptable.proc[high_prio_pointer].priority == 0 && !high_prio_hasrunnable){
+          high_prio_runnable = &ptable.proc[high_prio_pointer];
+          high_prio_hasrunnable = 1;
+        }
+      }
+
+      if(ptable.proc[med_prio_pointer].state == RUNNABLE){
+        if(ptable.proc[med_prio_pointer].priority == 1 && !med_prio_hasrunnable){
+          med_prio_runnable = &ptable.proc[med_prio_pointer];
+          med_prio_hasrunnable = 1;
+        }
+      }
+
+      if(ptable.proc[low_prio_pointer].state == RUNNABLE){
+        if(ptable.proc[low_prio_pointer].priority == 2 && !low_prio_hasrunnable){
+          low_prio_runnable = &ptable.proc[low_prio_pointer];
+          low_prio_hasrunnable = 1;
+        }
+      }
+
+      high_prio_pointer = (high_prio_pointer + 1) % NPROC;
+      med_prio_pointer  =  (med_prio_pointer + 1) % NPROC;
+      low_prio_pointer  =  (low_prio_pointer + 1) % NPROC;
     }
 
     // set p to the highest priority proc
-    p = highest_priority_proc;
+    p = 0;
+
+    if(high_prio_hasrunnable){
+      p = high_prio_runnable;
+      high_prio_lastrun_pointer = findprocslot(p);
+    }
+    else if(med_prio_hasrunnable){
+      p = med_prio_runnable;
+      med_prio_lastrun_pointer = findprocslot(p);
+    }
+    else if(low_prio_hasrunnable){
+      p = low_prio_runnable;
+      low_prio_lastrun_pointer = findprocslot(p);
+    }
+
+    if(!p){
+      release(&ptable.lock);
+      continue;
+    }
 
     // switch to chosen process.  it is the process's job
     // to release ptable.lock and then reacquire it
@@ -584,6 +648,7 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   myproc()->state = RUNNABLE;
+  myproc()->telapsed = 0;
   sched();
   release(&ptable.lock);
 }
@@ -636,6 +701,7 @@ sleep(void *chan, struct spinlock *lk)
   p->chan = chan;
   p->state = SLEEPING;
 
+  p->telapsed = 0;
   sched();
 
   // Tidy up.

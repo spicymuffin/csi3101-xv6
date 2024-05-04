@@ -5,52 +5,192 @@
 
 void mlfq_test()
 {
-  volatile unsigned int sum = 0;
-  unsigned int i;
-  int pid1, pid2;
-  int long_start, long_end, short_start, short_end, inter_start, inter_end;
+  int pid;
 
-  // Long-running process
-  long_start = uptime();
-
-  for (i=0; i<200000000; i++) {
-    sum += i;
-    if (i == 80000000) {
-      short_start = uptime();
-      pid1 = fork();
-      if (pid1 == 0) {
-        // Short-running process
-        volatile unsigned int short_sum = 1;
-        unsigned int j;
-        for (j=0; j<20000000; j++) {
-          short_sum *= j;
-        }
-        short_end = uptime();
-        printf(1, "Short process turnaround time: %d\n",  short_end - short_start);
-        exit();
-      } 
-
-    } else if (i == 160000000) {
-      inter_start = uptime();
-      pid2 = fork();
-      if (pid2 == 0) {
-        // Interactive process
-        for (int k=1; k<5; k++) {
-	        sleep(1);
-        }
-        inter_end = uptime();
-        printf(1, "Interactive process turnaround time: %d\n", inter_end - inter_start);
-        exit();
-      }
-
-    }
+  printf(1, "====start of test 0: testing essence of round robin====\n");
+  printf(1, "[child is spawned]\n");
+  pid = fork();
+  if (pid == 0) {
+    printf(1, "[child started execution]\n");
+    ps();
+    printf(1, "[child is performing an intensive task...]\n");
     
+    for (int a = 0; a < 150; a++){
+      volatile unsigned int short_sum = 1;
+      unsigned int j;
+      for (j=0; j<2000000; j++) {
+        short_sum *= j;
+      }
+      printf(1, "c");
+    }
+
+    printf(1, "\n");
+
+    printf(1, "[child has finished the intensive task]\n");
+    ps();
+
+    printf(1, "[child is exiting]\n");
+    exit();
+
+
+  } else {
+    printf(1, "[parent started execution]\n");
+    ps();
+    printf(1, "[parent is performing an intensive task...]\n");
+    
+    for (int a = 0; a < 150; a++){
+      volatile unsigned int short_sum = 1;
+      unsigned int j;
+      for (j=0; j<2000000; j++) {
+        short_sum *= j;
+      }
+      printf(1, "p");
+    }
+
+    printf(1, "\n");
+
+    printf(1, "[parent has finished the intensive task]\n");
+    ps();
+
+    printf(1, "[parent is waiting]\n");
+    wait();
+    printf(1, "[parent is terminating]\n");
+  }
+  printf(1, "====end of test 0: testing essence of round robin====\n");
+
+
+
+  printf(1, "\n\n\n");
+
+
+
+  printf(1, "====start of test 1: time slice expiration====\n");
+  printf(1, "[child is spawned]\n");
+  pid = fork();
+  if (pid == 0) {
+    printf(1, "[child started execution]\n");
+    ps();
+    printf(1, "[child is doing performing an intensive task...]\n");
+    
+    for (int a = 0; a < 8; a++){
+      volatile unsigned int short_sum = 1;
+      unsigned int j;
+      for (j=0; j<2000000; j++) {
+        short_sum *= j;
+      }
+      ps();
+    }
+
+    printf(1, "\n");
+
+    printf(1, "[child has finished the intensive task]\n");
+    ps();
+
+    printf(1, "[child is exiting]\n");
+    exit();
+  } else {
+    printf(1, "[parent started execution]\n");
+    printf(1, "[parent is waiting]\n");
+    wait();
+    printf(1, "[parent is terminating]\n");
+  }
+  printf(1, "====start of test 1: time slice expiration====\n");
+
+
+
+  printf(1, "\n\n\n");
+
+
+
+  printf(1, "====start of test 2: yield time slice expiration prevention====\n");
+  printf(1, "[child is spawned]\n");
+  pid = fork();
+  if (pid == 0) {
+  printf(1, "[child started execution]\n");
+  ps();
+  printf(1, "[child is performing an intensive task...]\n");
+  
+  for (int a = 0; a < 8; a++){
+    volatile unsigned int short_sum = 1;
+    unsigned int j;
+    for (j=0; j<2000000; j++) {
+      short_sum *= j;
+    }
+    ps();
+    yield();
   }
 
-  long_end = uptime();
-  printf(1, "Long process turnaround time: %d\n", long_end - long_start);
-  wait();
-  wait();
+  printf(1, "\n");
+
+  printf(1, "[child has finished the intensive task]\n");
+  ps();
+
+  printf(1, "[child is exiting]\n");
+  exit();
+  } else {
+    printf(1, "[parent started execution]\n");
+    printf(1, "[parent is waiting]\n");
+    wait();
+    printf(1, "[parent is terminating]\n");
+  }
+
+  printf(1, "====end of test 2: yield time slice expiration prevention====\n");
+
+
+  
+  printf(1, "\n\n\n");
+
+
+
+  printf(1, "====start of test 3: testing processes with different priorities====\n");
+  printf(1, "[child is spawned]\n");
+  pid = fork();
+  if (pid == 0) {
+    printf(1, "[child started execution]\n");
+    ps();
+    printf(1, "[child is performing an intensive task...]\n");
+    
+    for (int a = 0; a < 50; a++){
+      volatile unsigned int short_sum = 1;
+      unsigned int j;
+      for (j=0; j<2000000; j++) {
+        short_sum *= j;
+      }
+      printf(1, "c");
+      yield();
+    }
+
+    printf(1, "\n");
+
+    printf(1, "[child has finished the intensive task]\n");
+    ps();
+
+    printf(1, "[child is exiting]\n");
+    exit();
+  } else {
+    printf(1, "[parent started execution]\n");
+    ps();
+    printf(1, "[parent is performing an intensive task...]\n");
+    
+    for (int a = 0; a < 50; a++){
+      volatile unsigned int short_sum = 1;
+      unsigned int j;
+      for (j=0; j<2000000; j++) {
+        short_sum *= j;
+      }
+      printf(1, "p");
+    }
+
+    printf(1, "\n");
+
+    printf(1, "[parent has finished the intensive task]\n");
+    ps();
+    printf(1, "[parent is waiting]\n");
+    wait();
+    printf(1, "[parent is terminating]\n");
+  }
+
+  printf(1, "====end of test 3: testing processes with different priorities====\n");
 }
 
 int main(int argc, char **argv)

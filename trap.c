@@ -15,6 +15,7 @@ struct spinlock tickslock;
 uint ticks;
 
 extern int wakeup_flag;
+extern void yield_no_telapsed_reset();
 
 void
 tvinit(void)
@@ -116,12 +117,14 @@ trap(struct trapframe *tf)
   // If interrupts were on while locks held, would need to check nlock.
   if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER){
-
     myproc()->telapsed++;
+    // cprintf("telapsed of %s is: %d\n", myproc()->name, myproc()->telapsed);
     // Force scheduling round if proc exhausted its
     // RR timeslice (RRTIMESLICE)
     if (myproc()->telapsed >= RRTIMESLICE){
-      myproc()->telapsed = 0;
+      if(myproc()->priority < 2){
+        myproc()->priority++;
+      }
       yield();
     }
   }
@@ -129,7 +132,7 @@ trap(struct trapframe *tf)
   // Force scheduling round if something woke up
   if (myproc() && wakeup_flag == 1){
     wakeup_flag = 0;
-    yield();
+    yield_no_telapsed_reset();
   }
 
   // Check if the process has been killed since we yielded
