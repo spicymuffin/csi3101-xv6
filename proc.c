@@ -6,6 +6,9 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
 
 struct {
   struct spinlock lock;
@@ -24,6 +27,18 @@ void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+}
+
+void
+acquire_ptable_lock(void)
+{
+  acquire(&ptable.lock);
+}
+
+void
+release_ptable_lock(void)
+{
+  release(&ptable.lock);
 }
 
 // Must be called with interrupts disabled
@@ -141,6 +156,17 @@ userinit(void)
   p->tf->eip = 0;  // beginning of initcode.S
   p->nice = 2;
 
+  p->nmmap = 0;
+
+  for(int i = 0; i < NPROCMMAP; i++){
+    p->mmaps[i].addr_high = -1;
+    p->mmaps[i].addr_low = -1;
+    p->mmaps[i].fd = 0;
+    p->mmaps[i].flags = -1;
+    p->mmaps[i].size = -1;
+    p->mmaps[i].offset = -1;
+  }
+
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
 
@@ -157,6 +183,9 @@ userinit(void)
 
 // Grow current process's memory by n bytes.
 // Return 0 on success, -1 on failure.
+
+// allocates on call of sys_sbrk
+// change it so just marks PTEs as invalid
 int
 growproc(int n)
 {
@@ -192,15 +221,34 @@ fork(void)
   }
 
   // Copy process state from proc.
+  // mmaps are not copied bc we copy from 0 to sz
   if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
     kfree(np->kstack);
+    // kfree the mmaps of parent but in child
     np->kstack = 0;
     np->state = UNUSED;
     return -1;
-  }
+  } 
   np->sz = curproc->sz;
   np->parent = curproc;
   np->nice = curproc->nice;
+  np->nmmap = 0; // we dont inherit mmaps
+
+  // inherit execution data
+  np->ed.bdtbound = curproc->ed.bdtbound;
+  np->ed.elf = curproc->ed.elf;
+  np->ed.ip = curproc->ed.ip;
+  
+  // reset maps
+  for(int i = 0; i < NPROCMMAP; i++){
+    np->mmaps[i].addr_high = -1;
+    np->mmaps[i].addr_low = -1;
+    np->mmaps[i].fd = 0;
+    np->mmaps[i].flags = -1;
+    np->mmaps[i].size = -1;
+    np->mmaps[i].offset = -1;
+  }
+
   *np->tf = *curproc->tf;
 
   // Clear %eax so that fork returns 0 in the child.
@@ -237,13 +285,58 @@ exit(void)
   if(curproc == initproc)
     panic("init exiting");
 
+  #if DBGMSG_EXIT
+  cprintf("[DBGMSG] sys_exit: cycling through process's files\n");
+  #endif
+
   // Close all open files.
   for(fd = 0; fd < NOFILE; fd++){
     if(curproc->ofile[fd]){
+      struct file *f = curproc->ofile[fd];
+
+      // cycle through curproc->ptrs to see if the file was mmaped
+      for(int i = 0; i < curproc->nmmap; i++){
+        #if DBGMSG_EXIT
+        cprintf("[DBGMSG] sys_exit: comparing with\n", curproc->nmmap);
+        cprintf("         | compared file properties:\n");
+        cprintf("         | size: %d\n", f->ip->size);
+        cprintf("         | inum: %d\n", f->ip->inum);
+        #endif
+
+        // inode number is unique; use it to test file identicality
+        if(curproc->ptrs[i]->fd->ip->inum == f->ip->inum){
+          #if DBGMSG_EXIT
+          cprintf("[DBGMSG] sys_exit: found mmap of closing file\n");
+          #endif
+          void* addr = (void*)curproc->ptrs[i]->addr_low;
+          int size = curproc->ptrs[i]->size;
+          if(munmap(addr, size) < 0){
+            #if DBGMSG_EXIT
+            cprintf("[DBGMSG] sys_exit: munmap failed\n");
+            #endif
+            return;
+          }
+
+          #if DBGMSG_EXIT
+          cprintf("[DBGMSG] sys_exit: munmap successful\n");
+          #endif
+        }
+      }
+      
+      #if DBGMSG_EXIT
+      cprintf("[DBGMSG] sys_exit: closing file\n");
+      cprintf("         | file properties:\n");
+      cprintf("         | size:      %d\n", f->ip->size);
+      cprintf("         | inum:      %d\n", f->ip->inum);
+      cprintf("         | ofileindx: %d\n", fd);
+      #endif
+
+      // this also takes care of iputting the executable
       fileclose(curproc->ofile[fd]);
       curproc->ofile[fd] = 0;
     }
   }
+
 
   begin_op();
   iput(curproc->cwd);
@@ -499,7 +592,8 @@ kill(int pid)
   return -1;
 }
 
-int nice(int value)
+int 
+nice(int value)
 {
 	int new_nice;
 	struct proc *p = myproc();
@@ -513,6 +607,126 @@ int nice(int value)
 	release(&ptable.lock);
 
 	return p->nice;
+}
+
+void 
+get_padded_hex_addr(uint addr, char *buf)
+{
+  char map[16] = {
+      '0',
+      '1',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      'A',
+      'B',
+      'C',
+      'D',
+      'E',
+      'F',
+  };
+  buf[0] = '0';
+  buf[1] = 'x';
+  buf[10] = '\0';
+  for (int i = 9; i >= 2; i--)
+  {
+    buf[i] = map[addr % 16];
+    addr = addr / 16;
+  }
+}
+
+
+int
+vmemlayout(void)
+{
+  struct proc* p = myproc();
+  cprintf("<%s's vmemlayout>\n", p->name);
+  char tmp[11]; // 0x--------\0
+  cprintf("stat:\n");
+  get_padded_hex_addr(KERNBASE, tmp);
+  cprintf(" kernbase: %s\n", tmp);
+  get_padded_hex_addr(p->sz, tmp);
+  cprintf(" proc->sz: %s\n", tmp);
+  get_padded_hex_addr(p->tf->esp, tmp);
+  cprintf(" proc->sp: %s\n", tmp);
+
+  cprintf("layout:\n");
+  cprintf("+-----------------------+\n");
+  cprintf("|       KERNBASE        |\n");
+  cprintf("+-----------------------+\n");
+  int unalloc_pg_flag = 0;
+  int alloc_pg_flag = 0;
+  pte_t* pgdir = p->pgdir;
+  for(int i = PDX(KERNBASE) - 1; i >= 0; i--){
+    pte_t* pde = &pgdir[i]; // [] opearator has precedence
+    
+    if(!(*pde & PTE_P)){
+      // unallocated pgtab
+      alloc_pg_flag = 0;
+      unalloc_pg_flag = 0;
+      continue;
+    }
+
+    pte_t* pgtab = (pte_t*)P2V(PTE_ADDR(*pde));
+    for(int j = 1023; j >= 0; j--){
+      pte_t* pte = &pgtab[j];
+      if(!(*pte & PTE_P)){
+        // page not allocated
+        if(unalloc_pg_flag == 0)
+        {
+          if(alloc_pg_flag == 2){
+            get_padded_hex_addr((i << 22) | (j << 12) | 4095, tmp);
+            cprintf("| %s~", tmp);
+            get_padded_hex_addr((i << 22) | (j << 12) | 0, tmp);
+            cprintf("%s |\n", tmp);
+          }
+          cprintf("|   page__unallocated   |\n");
+          unalloc_pg_flag = 1;
+          alloc_pg_flag = 0;
+        }
+        else if(unalloc_pg_flag == 1){
+          cprintf("|          ...          |\n");
+          unalloc_pg_flag = 2;
+        }
+      }
+      else{
+        // page allocated
+        if(alloc_pg_flag == 0){
+          if(unalloc_pg_flag == 2){
+            cprintf("|   page__unallocated   |\n");
+          }
+          get_padded_hex_addr((i << 22) | (j << 12) | 4095, tmp);
+          cprintf("| %s~", tmp);
+          get_padded_hex_addr((i << 22) | (j << 12) | 0, tmp);
+          cprintf("%s |\n", tmp);
+          alloc_pg_flag = 1;
+          unalloc_pg_flag = 0;
+        }
+        else if(alloc_pg_flag == 1){
+          cprintf("|          ...          |\n");
+          alloc_pg_flag = 2;
+        }
+      }
+    }
+    if(alloc_pg_flag == 2){
+      get_padded_hex_addr((0 << 22) | (0 << 12) | 4095, tmp);
+      cprintf("| %s~", tmp);
+      get_padded_hex_addr((0 << 22) | (0 << 12) | 0, tmp);
+      cprintf ("%s |\n", tmp);
+      alloc_pg_flag = 0;
+    }
+    if(unalloc_pg_flag == 2){
+      cprintf("|   page__unallocated   |\n", tmp);
+      unalloc_pg_flag = 0;
+    }
+  }
+  cprintf("+-----------------------+\n");
+  return 0;
 }
 
 //PAGEBREAK: 36

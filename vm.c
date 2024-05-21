@@ -5,7 +5,11 @@
 #include "memlayout.h"
 #include "mmu.h"
 #include "proc.h"
-#include "elf.h"
+// #include "elf.h"
+#include "fs.h"
+#include "spinlock.h"
+#include "sleeplock.h"
+#include "file.h"
 
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
@@ -39,16 +43,20 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
   pte_t *pgtab;
 
   pde = &pgdir[PDX(va)];
-  if(*pde & PTE_P){
+  if(*pde & PTE_P){ // if the pgdir 's entry no. PDX(va) is present (the pagetable exists) then just return it
     pgtab = (pte_t*)P2V(PTE_ADDR(*pde));
   } else {
     if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
-      return 0;
+      return 0; // the pagetable didnt exist, and we dont want to create it or we couldnt create it
+
+    // the pagetable didnt exisst, but we were successfull at allocating space for it
+
     // Make sure all those PTE_P bits are zero.
     memset(pgtab, 0, PGSIZE);
     // The permissions here are overly generous, but they can
     // be further restricted by the permissions in the page table
     // entries, if necessary.
+    // page directory entry's value is pgtab's base address, obviously
     *pde = V2P(pgtab) | PTE_P | PTE_W | PTE_U;
   }
   return &pgtab[PTX(va)];
@@ -57,6 +65,7 @@ walkpgdir(pde_t *pgdir, const void *va, int alloc)
 // Create PTEs for virtual addresses starting at va that refer to
 // physical addresses starting at pa. va and size might not
 // be page-aligned.
+// page directory, va start, # of entries, pa start, permissions 
 static int
 mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
 {
@@ -64,11 +73,13 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
   pte_t *pte;
 
   a = (char*)PGROUNDDOWN((uint)va);
-  last = (char*)PGROUNDDOWN(((uint)va) + size - 1);
+  last = (char*)PGROUNDDOWN(((uint)va) + size - 1); // -1 because last is on last, so we want last to be last ()
+  // a is virtual address
   for(;;){
-    if((pte = walkpgdir(pgdir, a, 1)) == 0)
+    if((pte = walkpgdir(pgdir, a, 1)) == 0) // integer argument is one so we are requesting to allocate a page table if the page we want
+                                            // to map corresponds to a pagetable that is not present
       return -1;
-    if(*pte & PTE_P)
+    if(*pte & PTE_P) // mask off the PTE_P bit literally and if it masks and the bit is one then true else everything is zero so false
       panic("remap");
     *pte = pa | perm | PTE_P;
     if(a == last)
@@ -76,6 +87,9 @@ mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
     a += PGSIZE;
     pa += PGSIZE;
   }
+
+  flush_tlb(); // Q: is this bad design...? can hardware be "controlled" inside syscalls....?
+
   return 0;
 }
 
@@ -216,8 +230,144 @@ loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
   return 0;
 }
 
+int 
+lazyalloc(struct proc * p, uint va, int mpindx)
+{
+  pte_t *pte;
+  
+  if(va >= p->sz && mpindx == -1){
+    #if DBGMSG_LAZYALLOC
+    cprintf("[DBGMSG] lazyalloc: virtual address is above p->sz and not in a mmaped area\n");
+    #endif
+    return -1; // outside of memory allocated by proc
+  }
+  
+//   if(va < PGROUNDDOWN(p->tf->esp)){
+
+// #if DBGMSG_LAZYALLOC
+//     cprintf("[DBGMSG] lazyalloc: virtual address is below stackpointer\n");
+// #endif
+
+//     return -2; // below proc's stackpointer's page
+//   }
+  
+  // walk pgdir, allocate a pgtab if necessary
+  if((pte = walkpgdir(p->pgdir, (void*)va, 1)) == 0){
+    #if DBGMSG_LAZYALLOC
+    cprintf("[DBGMSG] lazyalloc: out of space to allocate a new pgtab\n");
+    #endif
+    return -3; // out of space for a new pgtab
+  }
+
+  char* mem;
+  if((mem = kalloc()) == 0){
+    #if DBGMSG_LAZYALLOC
+    cprintf("[DBGMSG] lazyalloc: out of space to allocate a new page\n");
+    #endif
+    return -4; // out of space for a new page
+  }
+
+  // if pte was already present we messed up
+  if(*pte & PTE_P)
+    panic("remap");
+
+  // establish faulted adress's page bounds
+  uint flt_pg_addr_low = PGROUNDDOWN(va);
+  uint flt_pg_addr_high = flt_pg_addr_low + PGSIZE;
+
+  // map the pte (give all permissions and clean basically at first)
+  *pte =  ((uint)(V2P(mem)) | PTE_W | PTE_U | PTE_P) & ~PTE_D;
+
+  // clear out the page we allocated
+  memset(mem, 0, PGSIZE);
+
+  #if DBGMSG_LAZYALLOC
+  char tmp[11];
+  cprintf("[DBGMSG] lazyalloc: successfully allocated a new page\n");
+  get_padded_hex_addr(va, tmp);
+  cprintf("         | address: %s\n", tmp);
+  get_padded_hex_addr(*pte, tmp);
+  cprintf("         | pte:     %s\n", tmp);
+  #endif
+
+  // read in file if the page was a part of a mmap
+  int mmapindx = mpindx;
+
+  // found the mmap to which va belongs to
+  if(mmapindx != -1){
+
+    struct mmapdata *mmpdt = &(p->mmaps[mmapindx]);
+
+    ilock(mmpdt->fd->ip);
+    if(readi(mmpdt->fd->ip,
+             (char*)flt_pg_addr_low,
+             (mmpdt->offset + (flt_pg_addr_low - mmpdt->addr_low)),
+             (flt_pg_addr_high == mmpdt->addr_high ? (mmpdt->size % PGSIZE) : (PGSIZE))) == -1)
+    {
+      #if DBGMSG_LAZYALLOC
+      cprintf("[DBGMSG] lazyalloc: read in for mmap page failed\n");
+      #endif
+      iunlock(mmpdt->fd->ip);
+      return -5; // read-in fail
+    }
+
+    #if DBGMSG_LAZYALLOC
+    cprintf("[DBGMSG] lazyalloc: read in for mmap page successful\n");
+    #endif
+    iunlock(mmpdt->fd->ip);
+
+    // manage permissions
+    if(!(mmpdt->flags & MAP_PROT_WRITE)){
+      *pte = *pte & ~PTE_W;
+    }
+
+    // unset dirty bit after reading in
+    *pte = *pte & ~PTE_D;
+
+    flush_tlb(); // Q: is this bad design...? can hardware be "controlled" inside syscalls....?
+
+    // bad code - i hate the control flow but oh well
+    return 1; // read-in success
+  }
+
+  // determine whether va belongs to bss/data/text segment
+  // load in executable binary if va is lower than p->ed.bdtbound
+  if(va < p->ed.bdtbound){
+    // if va also belongs to a mmap something really bad happened
+    if(mmapindx != -1)
+      panic("mmap & executable");
+    
+    int ld_exe_status_code = load_executable(p, p->ed.ip, va);
+    if(ld_exe_status_code < 0){
+      #if DBGMSG_LAZYALLOC
+      cprintf("[DBGMSG] lazyalloc: read in for bdt page failed\n");
+      #endif
+    }
+    #if DBGMSG_LAZYALLOC
+    cprintf("[DBGMSG] lazyalloc: read in for bdt page successful\n");
+    #endif
+    return 2; // executable read-in success
+  }
+
+  flush_tlb(); // Q: is this bad design...? can hardware be "controlled" inside syscalls....?
+
+  // bad code - i hate the control flow but oh well
+  return 0; // general success
+}
+
+uint*
+get_pte(struct proc* p, uint va)
+{
+  pte_t* pte;
+  if((pte = walkpgdir(p->pgdir, (void*)va, 0)) == 0){
+    return 0;
+  }
+  return pte;
+}
+
 // Allocate page tables and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
+// newsz is the first unallocated addr
 int
 allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
 {
@@ -230,15 +380,18 @@ allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
     return oldsz;
 
   a = PGROUNDUP(oldsz);
-  for(; a < newsz; a += PGSIZE){
-    mem = kalloc();
-    if(mem == 0){
+  for(; a < newsz; a += PGSIZE){ // keep in mind that += PGSIZE is run after the condition is checked lol
+    // this is allocating a page literally. we will check later if it is mapped or not
+    mem = kalloc(); // allocate a page somewhere in phys mem, return PA to store in mem
+    if(mem == 0){ // kalloc failed
       cprintf("allocuvm out of memory\n");
       deallocuvm(pgdir, newsz, oldsz);
       return 0;
     }
-    memset(mem, 0, PGSIZE);
-    if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
+    memset(mem, 0, PGSIZE); // zero out the page we just allocated with kalloc()
+    if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){ // map the single page that we allocated (create pte if needed and etc.)
+                                                                      // set writable and set user bits to 1
+                                                                      // we can use v2p bc page tables, directories are stored in the kernel (so after kernbase in the vram)
       cprintf("allocuvm out of memory (2)\n");
       deallocuvm(pgdir, newsz, oldsz);
       kfree(mem);
@@ -262,18 +415,28 @@ deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
     return oldsz;
 
   a = PGROUNDUP(newsz);
+  // while the page we are in is unneded (lower than oldsz)
   for(; a  < oldsz; a += PGSIZE){
     pte = walkpgdir(pgdir, (char*)a, 0);
+    // page table (entry behind pde is not present)
     if(!pte)
+      // move a by a page directory entry
       a = PGADDR(PDX(a) + 1, 0, 0) - PGSIZE;
+    
+    // if pte's page is present
     else if((*pte & PTE_P) != 0){
       pa = PTE_ADDR(*pte);
+      // if physicall pointed by the PTE is zero
       if(pa == 0)
         panic("kfree");
+    
+      // convert to virtual with p2v bc we are in kernelspace
       char *v = P2V(pa);
+      // free the pageframe pointed to by the va
       kfree(v);
       *pte = 0;
     }
+    flush_tlb();
   }
   return newsz;
 }
@@ -326,8 +489,8 @@ copyuvm(pde_t *pgdir, uint sz)
     if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0)
       panic("copyuvm: pte should exist");
     if(!(*pte & PTE_P))
-	  continue;
-      //panic("copyuvm: page not present");
+      continue;
+      // panic("copyuvm: page not present"); // why was this already commented out lol
     pa = PTE_ADDR(*pte);
     flags = PTE_FLAGS(*pte);
     if((mem = kalloc()) == 0)

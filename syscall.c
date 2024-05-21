@@ -110,6 +110,7 @@ extern int sys_yield(void);
 extern int sys_frees(void);
 extern int sys_mmap(void);
 extern int sys_munmap(void);
+extern int sys_vmemlayout(void);
 
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -140,6 +141,7 @@ static int (*syscalls[])(void) = {
 [SYS_frees] sys_frees,
 [SYS_mmap] sys_mmap,
 [SYS_munmap] sys_munmap,
+[SYS_vmemlayout] sys_vmemlayout,
 };
 
 void

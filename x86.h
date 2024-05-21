@@ -144,6 +144,22 @@ lcr3(uint val)
   asm volatile("movl %0,%%cr3" : : "r" (val));
 }
 
+// flush entire tlb
+static inline void
+flush_tlb(void)
+{
+  uint val;
+  asm volatile("movl %%cr3, %0" : "=r" (val));
+  asm volatile("movl %0, %%cr3" : : "r" (val));
+}
+
+// flush one va
+static inline void
+flush_tlb_addr(uint va)
+{
+  asm volatile("invlpg (%0)" : : "r" (va) : "memory");
+}
+
 //PAGEBREAK: 36
 // Layout of the trap frame built on the stack by the
 // hardware and by trapasm.S, and passed to trap().

@@ -1,3 +1,5 @@
+#include "elf.h"
+
 // Per-CPU state
 struct cpu {
   uchar apicid;                // Local APIC ID
@@ -34,6 +36,23 @@ struct context {
 
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
 
+// Set values to -1 if not initialized
+struct mmapdata {             
+  uint addr_low;               // Lowest address of the mmaping
+  uint addr_high;              // Highest address of the mmapping + 1
+  int size;                    // Length of the actual data
+  struct file* fd;             // File that we are mapping (so we can demand page later)
+  int flags;
+  int offset;
+};
+
+// contains stuff required to lazily allocate program data
+struct execdata {
+  struct inode *ip;            // inode that holds the program binary
+  struct elfhdr elf;           // ELF header
+  uint bdtbound;               // bss/data/text bound
+};
+
 // Per-process state
 struct proc {
   uint sz;                     // Size of process memory (bytes)
@@ -46,14 +65,18 @@ struct proc {
   struct context *context;     // swtch() here to run process
   void *chan;                  // If non-zero, sleeping on chan
   int killed;                  // If non-zero, have been killed
-  int nice;
+  int nice;                    // Process's priority
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int nmmap;                   // # Of mmaps created by process 
+  struct mmapdata* ptrs[4];    // Pointers to mmaps (ordered)
+  struct mmapdata mmaps[4];    // Memory maps created by process
+  struct execdata ed;          // Execution data
 };
 
 // Process memory is laid out contiguously, low addresses first:
 //   text
 //   original data and bss
-//   fixed-size stack
+//   fixed-size stack (not anymore)
 //   expandable heap

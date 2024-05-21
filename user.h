@@ -1,3 +1,7 @@
+#include "types.h"
+#define	MAP_PROT_READ        0x00000001
+#define MAP_PROT_WRITE       0x00000002
+
 struct stat;
 struct rtcdate;
 
@@ -30,6 +34,7 @@ int nice(int);
 int frees(void);
 void* mmap(int, int , int, int);
 int munmap(const void*, int);
+int vmemlayout(void);
 
 // ulib.c
 int stat(const char*, struct stat*);

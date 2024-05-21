@@ -45,7 +45,7 @@ free(void *ap)
 
 static Header*
 morecore(uint nu)
-{
+{ 
   char *p;
   Header *hp;
 

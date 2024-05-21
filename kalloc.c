@@ -21,7 +21,7 @@ struct run {
 
 struct {
   struct spinlock lock;
-  int use_lock;
+  int use_lock;             // can we use the lock? (are we fully initialized)
   struct run *freelist;
 } kmem;
 
@@ -99,7 +99,8 @@ kalloc(void)
   return (char*)r;
 }
 
-int sys_frees(void)
+int
+sys_frees(void)
 {
 	return frees;
 }

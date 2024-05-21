@@ -47,12 +47,23 @@ sys_sbrk(void)
 {
   int addr;
   int n;
+  struct proc* p = myproc();
 
   if(argint(0, &n) < 0)
     return -1;
+
   addr = myproc()->sz;
-  if(growproc(n) < 0)
-    return -1;
+  myproc()->sz = addr + n;
+
+#if DBGMSG_SBRK
+  cprintf("[DBGMSG] sbrk: added %d to sz\n", n);
+#endif
+
+  // dealloc memory if we are shrinking proc
+  if(n < 0){
+    p->sz = deallocuvm(p->pgdir, p->sz, p->sz + n);
+  }
+  
   return addr;
 }
 
@@ -90,16 +101,25 @@ sys_uptime(void)
   return xticks;
 }
 
-int sys_yield(void)
+int
+sys_yield(void)
 {
 	yield();
 	return 0;
 }
 
-int sys_nice(void)
+int
+sys_nice(void)
 {
 	int value;
 	if ( argint(0, &value) < 0 )
 		return -1;
 	return nice(value);
+}
+
+int
+sys_vmemlayout(void)
+{
+  vmemlayout();
+  return 0;
 }

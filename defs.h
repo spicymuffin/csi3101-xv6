@@ -24,6 +24,7 @@ void            panic(char*) __attribute__((noreturn));
 
 // exec.c
 int             exec(char*, char**);
+int             load_executable(struct proc* p, struct inode *ip, uint va);
 
 // file.c
 struct file*    filealloc(void);
@@ -121,6 +122,11 @@ int             wait(void);
 void            wakeup(void*);
 void            yield(void);
 int 			nice(int);
+int             vmemlayout(void);
+void            get_padded_hex_addr(uint addr, char* buf);
+void            acquire_ptable_lock(void);
+void            release_ptable_lock(void);
+
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -186,6 +192,12 @@ void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
+
+int             lazyalloc(struct proc* p, uint va, int mpindx);
+uint*           get_pte(struct proc* p, uint va);
+
+// sysfile.c
+int             munmap(void* ptr, int len);
 
 // swap.c
 void swapread(char* ptr, int blkno);

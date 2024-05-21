@@ -94,11 +94,24 @@ struct segdesc {
 #define PTE_P           0x001   // Present
 #define PTE_W           0x002   // Writeable
 #define PTE_U           0x004   // User
+#define PTE_D           0x040   // Dirty
 #define PTE_PS          0x080   // Page Size
 
+//     virtual address layout
+//
+//                     pagesize? what why
+//                         |
+//                         |
+//                         S   DUWP
+// 00000000000000000000000000001111
+// <------address-----><--flags--->
+
 // Address in page table or page directory entry
-#define PTE_ADDR(pte)   ((uint)(pte) & ~0xFFF)
-#define PTE_FLAGS(pte)  ((uint)(pte) &  0xFFF)
+#define PTE_ADDR(pte)   ((uint)(pte) & ~0xFFF) // ~FFF -> 11111111111111111111000000000000
+#define PTE_FLAGS(pte)  ((uint)(pte) &  0xFFF) //  FFF -> 00000000000000000000111111111111
+
+#define	MAP_PROT_READ        0x00000001
+#define MAP_PROT_WRITE       0x00000002
 
 #ifndef __ASSEMBLER__
 typedef uint pte_t;
