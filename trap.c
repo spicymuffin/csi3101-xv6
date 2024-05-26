@@ -118,11 +118,12 @@ trap(struct trapframe *tf)
   if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER){
     myproc()->telapsed++;
-    // cprintf("telapsed of %s is: %d\n", myproc()->name, myproc()->telapsed);
+    cprintf("telapsed of %d is: %d\n", findprocslot(myproc()), myproc()->telapsed);
     // Force scheduling round if proc exhausted its
     // RR timeslice (RRTIMESLICE)
     if (myproc()->telapsed >= RRTIMESLICE){
       if(myproc()->priority < 2){
+        cprintf("demoting proc no. %d\n", findprocslot(myproc()));
         myproc()->priority++;
       }
       yield();

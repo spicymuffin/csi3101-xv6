@@ -122,6 +122,7 @@ int             nice(int);
 int             ps(void);
 void            wakeup(void*);
 void            yield(void);
+int             findprocslot(struct proc*);
 
 // swtch.S
 void            swtch(struct context**, struct context*);

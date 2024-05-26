@@ -3,6 +3,9 @@
         "*.py": "python",
         "limits": "c",
         "spinlock.h": "c",
-        "typeinfo": "c"
+        "typeinfo": "c",
+        "proc.h": "c",
+        "memlayout.h": "c",
+        "defs.h": "c"
     }
 }

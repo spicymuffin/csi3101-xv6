@@ -22,6 +22,13 @@ static void wakeup1(void *chan);
 
 int wakeup_flag = 0;
 
+int
+findprocslot(struct proc* p)
+{
+  int ret = (int)(p - ptable.proc);
+  return ret;
+}
+
 void
 pinit(void)
 {
@@ -241,6 +248,7 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  cprintf("FORK ID: %d\n", findprocslot(np));
 
   release(&ptable.lock);
 
@@ -494,13 +502,6 @@ old_scheduler(void)
   }
 }
 
-int
-findprocslot(struct proc* p)
-{
-  int ret = (int)(p - ptable.proc);
-  return ret;
-}
-
 // MLFQ scheduler
 void 
 scheduler(void)
@@ -510,11 +511,12 @@ scheduler(void)
   c->proc = 0;
 
   int high_prio_lastrun_pointer = 0;
-
-  int med_prio_lastrun_pointer = 0;
-
-  int low_prio_lastrun_pointer = 0;
+  int  med_prio_lastrun_pointer = 0;
+  int  low_prio_lastrun_pointer = 0;
   
+  int ran_high_prio = 0;
+  int  ran_med_prio = 0;
+  int  ran_low_prio = 0;
 
   for(;;){
 
@@ -533,9 +535,9 @@ scheduler(void)
 
     // we are going to leverage the fact that the ptable has an order
     // which can act as a RR "queue"
-    int high_prio_pointer = (high_prio_lastrun_pointer + 1) % NPROC;
-    int  med_prio_pointer =  (med_prio_lastrun_pointer + 1) % NPROC;
-    int  low_prio_pointer =  (low_prio_lastrun_pointer + 1) % NPROC;
+    int high_prio_pointer = (high_prio_lastrun_pointer + (ran_high_prio ? 1 : 0)) % NPROC;
+    int  med_prio_pointer =  (med_prio_lastrun_pointer +  (ran_med_prio ? 1 : 0)) % NPROC;
+    int  low_prio_pointer =  (low_prio_lastrun_pointer +  (ran_low_prio ? 1 : 0)) % NPROC;
     
     for(int i = 0; i < NPROC; i++){
 
@@ -571,17 +573,32 @@ scheduler(void)
     if(high_prio_hasrunnable){
       p = high_prio_runnable;
       high_prio_lastrun_pointer = findprocslot(p);
+      ran_high_prio = 1;
+      ran_med_prio  = 0;
+      ran_low_prio  = 0;
+      cprintf("running proc (high) %d\n", high_prio_lastrun_pointer);
     }
     else if(med_prio_hasrunnable){
       p = med_prio_runnable;
       med_prio_lastrun_pointer = findprocslot(p);
+      ran_high_prio = 0;
+      ran_med_prio  = 1;
+      ran_low_prio  = 0;
+      cprintf("running proc (med) %d\n", med_prio_lastrun_pointer);
     }
     else if(low_prio_hasrunnable){
       p = low_prio_runnable;
       low_prio_lastrun_pointer = findprocslot(p);
+      ran_high_prio = 0;
+      ran_med_prio  = 0;
+      ran_low_prio  = 1;
+      cprintf("running proc (low) %d\n", low_prio_lastrun_pointer);
     }
 
     if(!p){
+      ran_high_prio = 0;
+      ran_med_prio  = 0;
+      ran_low_prio  = 0;
       release(&ptable.lock);
       continue;
     }
