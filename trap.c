@@ -118,12 +118,16 @@ trap(struct trapframe *tf)
   if(myproc() && myproc()->state == RUNNING &&
      tf->trapno == T_IRQ0+IRQ_TIMER){
     myproc()->telapsed++;
+    #if DBGMSG_TRAP
     cprintf("telapsed of %d is: %d\n", findprocslot(myproc()), myproc()->telapsed);
+    #endif
     // Force scheduling round if proc exhausted its
     // RR timeslice (RRTIMESLICE)
     if (myproc()->telapsed >= RRTIMESLICE){
       if(myproc()->priority < 2){
+        #if DBGMSG_TRAP
         cprintf("demoting proc no. %d\n", findprocslot(myproc()));
+        #endif
         myproc()->priority++;
       }
       yield();
@@ -133,7 +137,7 @@ trap(struct trapframe *tf)
   // Force scheduling round if something woke up
   if (myproc() && wakeup_flag == 1){
     wakeup_flag = 0;
-    yield_no_telapsed_reset();
+    yield();
   }
 
   // Check if the process has been killed since we yielded

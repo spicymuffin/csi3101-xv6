@@ -191,16 +191,6 @@ growproc(int n)
   return 0;
 }
 
-void
-yield_no_telapsed_reset(void)
-{
-  acquire(&ptable.lock);
-  myproc()->state = RUNNABLE;
-  sched();
-  release(&ptable.lock);
-}
-
-
 // Create a new process copying p as the parent.
 // Sets up stack to return as if from system call.
 // Caller must set state of returned proc to RUNNABLE.
@@ -248,11 +238,13 @@ fork(void)
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
+  #if DBGMSG_FORK
   cprintf("FORK ID: %d\n", findprocslot(np));
+  #endif
 
   release(&ptable.lock);
 
-  yield_no_telapsed_reset();
+  yield();
 
   return pid;
 }
@@ -527,7 +519,7 @@ scheduler(void)
     struct proc* high_prio_runnable = 0;
     struct proc* med_prio_runnable = 0;
     struct proc* low_prio_runnable = 0;
-
+    
     // enable interrupts on this processor.
     sti();
 
@@ -535,10 +527,22 @@ scheduler(void)
 
     // we are going to leverage the fact that the ptable has an order
     // which can act as a RR "queue"
-    int high_prio_pointer = (high_prio_lastrun_pointer + (ran_high_prio ? 1 : 0)) % NPROC;
-    int  med_prio_pointer =  (med_prio_lastrun_pointer +  (ran_med_prio ? 1 : 0)) % NPROC;
-    int  low_prio_pointer =  (low_prio_lastrun_pointer +  (ran_low_prio ? 1 : 0)) % NPROC;
+    int high_prio_pointer = (high_prio_lastrun_pointer + ((ptable.proc[high_prio_lastrun_pointer].telapsed >= RRTIMESLICE && ran_high_prio) ? 1 : 0)) % NPROC;
+    int  med_prio_pointer =  (med_prio_lastrun_pointer +  ((ptable.proc[med_prio_lastrun_pointer].telapsed >= RRTIMESLICE && ran_med_prio) ? 1 : 0)) % NPROC;
+    int  low_prio_pointer =  (low_prio_lastrun_pointer +  ((ptable.proc[low_prio_lastrun_pointer].telapsed >= RRTIMESLICE && ran_low_prio) ? 1 : 0)) % NPROC;
+
+    if(ptable.proc[high_prio_lastrun_pointer].telapsed >= RRTIMESLICE){
+      ptable.proc[high_prio_lastrun_pointer].telapsed = 0;
+    }
     
+    if(ptable.proc[med_prio_lastrun_pointer].telapsed >= RRTIMESLICE){
+      ptable.proc[med_prio_lastrun_pointer].telapsed = 0;
+    }
+    
+    if(ptable.proc[low_prio_lastrun_pointer].telapsed >= RRTIMESLICE){
+      ptable.proc[low_prio_lastrun_pointer].telapsed = 0;
+    }
+
     for(int i = 0; i < NPROC; i++){
 
       if(ptable.proc[high_prio_pointer].state == RUNNABLE){
@@ -576,7 +580,9 @@ scheduler(void)
       ran_high_prio = 1;
       ran_med_prio  = 0;
       ran_low_prio  = 0;
+      #if DBGMSG_SCHEDULER
       cprintf("running proc (high) %d\n", high_prio_lastrun_pointer);
+      #endif
     }
     else if(med_prio_hasrunnable){
       p = med_prio_runnable;
@@ -584,7 +590,9 @@ scheduler(void)
       ran_high_prio = 0;
       ran_med_prio  = 1;
       ran_low_prio  = 0;
+      #if DBGMSG_SCHEDULER
       cprintf("running proc (med) %d\n", med_prio_lastrun_pointer);
+      #endif
     }
     else if(low_prio_hasrunnable){
       p = low_prio_runnable;
@@ -592,7 +600,9 @@ scheduler(void)
       ran_high_prio = 0;
       ran_med_prio  = 0;
       ran_low_prio  = 1;
+      #if DBGMSG_SCHEDULER
       cprintf("running proc (low) %d\n", low_prio_lastrun_pointer);
+      #endif
     }
 
     if(!p){
@@ -667,7 +677,6 @@ yield(void)
 {
   acquire(&ptable.lock);  //DOC: yieldlock
   myproc()->state = RUNNABLE;
-  myproc()->telapsed = 0;
   sched();
   release(&ptable.lock);
 }

@@ -11,7 +11,7 @@ void mlfq_long()
   int pid1, pid2, pid3, pid4, pid5, pid6;
 
   // Long-running process1
-  printf(1, "creating long1\n");
+  // printf(1, "creating long1\n");
   long_start1 = uptime();
   pid1 = fork();
   if (pid1 == 0)
@@ -23,7 +23,7 @@ void mlfq_long()
       sum += i;
       if (i == 300000000)
       {
-        printf(1, "creating medium\n");
+        // printf(1, "creating medium\n");
         med_start = uptime();
         pid4 = fork();
         if (pid4 == 0)
@@ -40,7 +40,7 @@ void mlfq_long()
           exit();
         }
 
-        printf(1, "creating short\n");
+        // printf(1, "creating short\n");
         short_start = uptime();
         pid5 = fork();
         if (pid5 == 0)
@@ -55,7 +55,7 @@ void mlfq_long()
           short_end = uptime();
           printf(1, "Short: %d\n", short_end - short_start);
 
-          printf(1, "creating interactive\n");
+          // printf(1, "creating interactive\n");
           io_start = uptime();
           pid6 = fork();
           if (pid6 == 0)
@@ -83,7 +83,7 @@ void mlfq_long()
   }
 
   // Long-running process2
-  printf(1, "creating long3\n");
+  // printf(1, "creating long3\n");
   long_start2 = uptime();
   pid2 = fork();
   if (pid2 == 0)
@@ -100,7 +100,7 @@ void mlfq_long()
   }
 
   // Long-running process3
-  printf(1, "creating long3\n");
+  // printf(1, "creating long3\n");
   long_start3 = uptime();
   pid3 = fork();
   if (pid3 == 0)
