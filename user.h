@@ -25,6 +25,7 @@ int sleep(int);
 int uptime(void);
 int swapread(const char*, int);
 int swapwrite(const char*, int);
+int frees(void);
 int clone(char*);
 int join(void);
 int mutex_lock(int*);
