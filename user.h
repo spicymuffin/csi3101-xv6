@@ -25,6 +25,10 @@ int sleep(int);
 int uptime(void);
 int swapread(const char*, int);
 int swapwrite(const char*, int);
+int clone(char*);
+int join(void);
+int mutex_lock(int*);
+int mutex_unlock(int *);
 
 // ulib.c
 int stat(const char*, struct stat*);
@@ -39,3 +43,6 @@ void* memset(void*, int, uint);
 void* malloc(uint);
 void free(void*);
 int atoi(const char*);
+int thread_create(void(*func)(void*), void *);
+int thread_join(int);
+

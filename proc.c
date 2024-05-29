@@ -533,3 +533,13 @@ procdump(void)
     cprintf("\n");
   }
 }
+
+int clone(char* stack)
+{
+	return -1;
+}
+
+int join(void)
+{
+	return -1;
+}

@@ -89,3 +89,33 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+int sys_clone(void)
+{
+	char* stack;
+	if(argptr(0, &stack, 4096) < 0 )
+		return -1;
+	return clone(stack);
+}
+
+int sys_join(void)
+{
+	return join();
+}
+
+int sys_mutex_lock(void)
+{
+	char* l;
+	if ( argptr(0, &l, 4) < 0 )
+		return -1;
+	return mutex_lock((int*)l);
+}
+
+int sys_mutex_unlock(void)
+{
+	char *l;
+	if ( argptr(0, &l, 4) , 0)
+		return -1;
+	return mutex_unlock((int*)l);
+}
+
