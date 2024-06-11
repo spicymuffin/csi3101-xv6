@@ -17,12 +17,12 @@
 
 
 // DBG params
-#define DBGMSG_LAZYALLOC      0 // lazyalloc's debug messages
-#define DBGMSG_PAGEFAULT      0 // pgflt trap handler's debug messages
-#define DBGMSG_MMAP           0 // mmap debug messages
-#define DBGMSG_MUNMAP         0 // munmap debug messages
-#define DBGMSG_EXEC           0 // exec debug messages
-#define DBGMSG_SBRK           0 // sbrk debug messages
-#define DBGMSG_SYSCLOSE       0 // sys_close debug messages
-#define DBGMSG_EXIT           0 // exit debug messages
-#define DMGMSG_LOAD_EXECTBL   0 // load_executable debug messages
+// #define DBGMSG_LAZYALLOC      1 // lazyalloc's debug messages
+// #define DBGMSG_PAGEFAULT      1 // pgflt trap handler's debug messages
+// #define DBGMSG_MMAP           1 // mmap debug messages
+// #define DBGMSG_MUNMAP         1 // munmap debug messages
+// #define DBGMSG_EXEC           1 // exec debug messages
+// #define DBGMSG_SBRK           1 // sbrk debug messages
+// #define DBGMSG_SYSCLOSE       1 // sys_close debug messages
+// #define DBGMSG_EXIT           1 // exit debug messages
+// #define DMGMSG_LOAD_EXECTBL   1 // load_executable debug messages

@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "*.py": "python",
+        "traps.h": "c",
+        "user.h": "c"
+    }
+}
