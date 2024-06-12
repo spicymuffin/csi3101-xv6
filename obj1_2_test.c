@@ -22,7 +22,7 @@ int strncmp(const char *p, const char *q, uint n)
 int main(void)
 {
 	char *filename1 = "README";
-	int file1_size = 1024 * 3;
+	int file1_size = 512;
 	int fd1;
 	char *mmaped_area1;
 	char *new_string = "----- BBBye, OS, Virtual Memory! -----";

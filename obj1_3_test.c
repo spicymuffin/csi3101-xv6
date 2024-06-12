@@ -14,13 +14,13 @@ int main(void)
 {
 	// #4 - after munmap, accessing munmap'ed area cause a fault
 	char *filename = "README";
-	int file_size = 1024 * 3;
+	int file_size = 512;
 	int fd = open(filename, O_CREATE | O_RDWR);
 	char *mmaped_area = (char *)mmap(fd, 0, file_size, MAP_PROT_READ | MAP_PROT_WRITE);
 
-	char *test_address = mmaped_area + (1024 * 3) - 1;
+	char *test_address = mmaped_area + (512) - 1;
 
-	munmap(mmaped_area, 1024 * 3);
+	munmap(mmaped_area, 512);
 
 	printf(1, "=== Test accessng munmap'ed area ===\n");
 	*test_address = 'X'; // must be failed

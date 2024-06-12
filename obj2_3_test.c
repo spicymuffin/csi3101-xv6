@@ -19,7 +19,7 @@ int main(void)
 	printf(1, "==== Initial frees : %d ====\n", init_frees);
 
 	int fd = open("README", O_RDWR);
-	char *mmaped_area = (char*)mmap(fd, 0, 1024 * 4, MAP_PROT_READ | MAP_PROT_WRITE);
+	char *mmaped_area = (char*)mmap(fd, 0, 512, MAP_PROT_READ | MAP_PROT_WRITE);
 	
 	after_mmap_frees = frees();
 	printf(1, "==== After mmap frees : %d ====\n", after_mmap_frees);
