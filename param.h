@@ -10,7 +10,7 @@
 #define MAXOPBLOCKS  10  // max # of blocks any FS op writes
 #define LOGSIZE      (MAXOPBLOCKS*3)  // max data blocks in on-disk log
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
-#define FSSIZE       1000  // size of file system in blocks
+#define FSSIZE       2500  // size of file system in blocks
 
 #define NSYSMMAP     16  // maximum number of mmaped files in system
 #define NPROCMMAP     4  // maximum number of mmaped files per proc
