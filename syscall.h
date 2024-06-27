@@ -20,11 +20,12 @@
 #define SYS_link   19
 #define SYS_mkdir  20
 #define SYS_close  21
-#define SYS_swapread	22
-#define SYS_swapwrite	23
-#define SYS_frees 24
-#define SYS_clone 25
-#define SYS_join 26
-#define SYS_mutex_lock 27
-#define SYS_mutex_unlock 28
-
+#define SYS_swapread	   22
+#define SYS_swapwrite	   23
+#define SYS_frees          24
+#define SYS_clone          25
+#define SYS_join           26
+#define SYS_mutex_lock     27
+#define SYS_mutex_unlock   28
+#define SYS_stackdump      29
+#define SYS_vmemlayout     30

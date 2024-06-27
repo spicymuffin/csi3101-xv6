@@ -30,6 +30,8 @@ int clone(char*);
 int join(void);
 int mutex_lock(int*);
 int mutex_unlock(int *);
+void stackdump();
+void vmemlayout(void);
 
 // ulib.c
 int stat(const char*, struct stat*);

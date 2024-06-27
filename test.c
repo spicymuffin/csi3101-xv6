@@ -49,9 +49,8 @@ int main(int argc, char** argv)
 	int tid;
 	tid = thread_create(thread_main, &id);
 
-	printf(1, "hello main thread\n");
-	thread_join(tid);
-
+	printf(1, "main thread started, tid of thread is: %d\n", tid);
+	exit();
 	printf(1, "hello main thread joined\n");
 
 	exit();

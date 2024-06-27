@@ -52,12 +52,14 @@ holdingsleep(struct sleeplock *lk)
   return r;
 }
 
-int mutex_lock(volatile int* l)
+int
+mutex_lock(volatile int* l)
 {
   return 0;
 }
 
-int mutex_unlock(volatile int* l)
+int
+mutex_unlock(volatile int* l)
 {
   return 0;
 }

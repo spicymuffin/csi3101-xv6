@@ -15,6 +15,8 @@ struct {
 static struct proc *initproc;
 
 int nextpid = 1;
+int nexttid = 1;
+
 extern void forkret(void);
 extern void trapret(void);
 
@@ -110,6 +112,9 @@ found:
   sp -= sizeof *p->context;
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
+
+  // when process is going to be first restored from the context, eip value
+  // is going to cause the start of execution of trapret
   p->context->eip = (uint)forkret;
 
   return p;
@@ -142,6 +147,8 @@ userinit(void)
 
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
+
+  p->pthread = 1;
 
   // this assignment to p->state lets other cores
   // run this process. the acquire forces the above
@@ -185,6 +192,14 @@ fork(void)
   struct proc *np;
   struct proc *curproc = myproc();
 
+  // "only a thread parent can invoke fork()"
+  // "fork() returns -1 if is invoked by thread children"
+  if (curproc->pthread != 1){
+    return -1;
+  }
+
+  // "fork() spawns a child process with one thread"
+
   // Allocate process.
   if((np = allocproc()) == 0){
     return -1;
@@ -200,6 +215,9 @@ fork(void)
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
+
+  // forked -> is a process's main thread
+  np->pthread = 1;
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -253,12 +271,27 @@ exit(void)
   // Parent might be sleeping in wait().
   wakeup1(curproc->parent);
 
-  // Pass abandoned children to init.
-  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if(p->parent == curproc){
-      p->parent = initproc;
-      if(p->state == ZOMBIE)
-        wakeup1(initproc);
+  // if a non main thread exits,
+  if(curproc->pthread == 0){
+    // decrement nmthreadcnt of parent
+    curproc->parent->nmthrdcnt--;
+    // wakeup parent, which might be sleeping bc its nmthreadcnt wasnt 0
+    wakeup1(curproc->parent);
+    // wakeup initproc, which is responsible 
+  }
+  // if a main thread exits, 
+  else{
+    // pass children to initproc
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+      if(p->parent == curproc){
+        #if DBGMSG_EXIT
+        cprintf("exit: passing orphan to initproc\n");
+        #endif
+        p->parent = initproc;
+        p->pid = initproc->pid;
+        if(p->state == ZOMBIE)
+          wakeup1(initproc);
+      }
     }
   }
 
@@ -285,13 +318,23 @@ wait(void)
       if(p->parent != curproc)
         continue;
       havekids = 1;
-      if(p->state == ZOMBIE){
+
+      // recover resources of a process if all non main threads are dead
+      if(p->state == ZOMBIE && p->nmthrdcnt == 0){
         // Found one.
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
         freevm(p->pgdir);
         p->pid = 0;
+
+        // reset tid
+        p->tid = 0;
+        // reset pthread flag
+        p->pthread = 0;
+        // reset nmthreadcnt
+        p->nmthrdcnt = 0;
+
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
@@ -534,13 +577,391 @@ procdump(void)
   }
 }
 
-// help
+void 
+get_padded_hex_addr(uint addr, char *buf)
+{
+  char map[16] = {
+      '0',
+      '1',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      'A',
+      'B',
+      'C',
+      'D',
+      'E',
+      'F',
+  };
+  buf[0] = '0';
+  buf[1] = 'x';
+  buf[10] = '\0';
+  for (int i = 9; i >= 2; i--)
+  {
+    buf[i] = map[addr % 16];
+    addr = addr / 16;
+  }
+}
+
+void
+stackdump(void)
+{
+  struct proc* p = myproc();
+  cprintf("<%s's stack>\n", p->name);
+
+  char buf1[11]; // 0x--------\0
+  char buf2[11]; // 0x--------\0
+
+  get_padded_hex_addr(p->tf->ebp, buf1);
+  cprintf("current stack frame stackbase: %s\n", buf1);
+
+  get_padded_hex_addr(p->tf->esp, buf1);
+  cprintf("current stack frame stackptr: %s\n", buf1);
+
+  uint it = 0x2ffc;
+  uint* ptr = (uint*)it;
+
+  for (ptr = (uint*)it; (uint)ptr != p->tf->esp; ptr--){
+    get_padded_hex_addr((uint)ptr, buf1);
+    get_padded_hex_addr((uint)*ptr, buf2);
+
+    cprintf("%s : ", buf1);
+    cprintf("%s\n", buf2);
+  }
+
+  get_padded_hex_addr((uint)ptr, buf1);
+  get_padded_hex_addr((uint)*ptr, buf2);
+
+  cprintf("%s : ", buf1);
+  cprintf("%s\n", buf2);
+
+  // uint ebp = p->tf->ebp;
+  // while (ebp != 0x0 && ebp != 0xffffffff) {
+  //   uint* ptr = (uint*)ebp;
+  //   uint prev_ebp = *ptr;
+  //   uint return_addr = *(ptr+1);
+
+  //   if (prev_ebp <= ebp) {
+  //     cprintf("stack frame link corrupted\n");
+  //     break;
+  //   }
+
+  //   get_padded_hex_addr(prev_ebp, buf1);
+  //   cprintf("prev ebp:    %s\n", buf1);
+  //   get_padded_hex_addr(ebp, buf1);
+  //   cprintf("ebp:         %s\n", buf1);
+  //   get_padded_hex_addr(return_addr, buf1);
+  //   cprintf("return addr: %s\n", buf1);
+
+  //   cprintf("stack contents around ebp: %x %x %x %x\n", *(uint *)(ebp-8), *(uint *)(ebp-4), *(uint *)(ebp), *(uint *)(ebp+4));
+
+  //   ebp = prev_ebp;
+  // }
+}
+
+void
+vmemlayout(void)
+{
+  struct proc* p = myproc();
+  cprintf("<%s's vmemlayout>\n", p->name);
+  char tmp[11]; // 0x--------\0
+  cprintf("stat:\n");
+  get_padded_hex_addr(KERNBASE, tmp);
+  cprintf(" kernbase: %s\n", tmp);
+  get_padded_hex_addr(p->sz, tmp);
+  cprintf(" proc->sz: %s\n", tmp);
+  get_padded_hex_addr(p->tf->esp, tmp);
+  cprintf(" proc->sp: %s\n", tmp);
+
+  cprintf("layout:\n");
+  cprintf("+-----------------------+\n");
+  cprintf("|       KERNBASE        |\n");
+  cprintf("+-----------------------+\n");
+  int unalloc_pg_flag = 0;
+  int alloc_pg_flag = 0;
+  pte_t* pgdir = p->pgdir;
+  for(int i = PDX(KERNBASE) - 1; i >= 0; i--){
+    pte_t* pde = &pgdir[i]; // [] opearator has precedence
+    
+    if(!(*pde & PTE_P)){
+      // unallocated pgtab
+      alloc_pg_flag = 0;
+      unalloc_pg_flag = 0;
+      continue;
+    }
+
+    pte_t* pgtab = (pte_t*)P2V(PTE_ADDR(*pde));
+    for(int j = 1023; j >= 0; j--){
+      pte_t* pte = &pgtab[j];
+      if(!(*pte & PTE_P)){
+        // page not allocated
+        if(unalloc_pg_flag == 0)
+        {
+          if(alloc_pg_flag == 2){
+            get_padded_hex_addr((i << 22) | (j << 12) | 4095, tmp);
+            cprintf("| %s~", tmp);
+            get_padded_hex_addr((i << 22) | (j << 12) | 0, tmp);
+            cprintf("%s |\n", tmp);
+          }
+          cprintf("|   page__unallocated   |\n");
+          unalloc_pg_flag = 1;
+          alloc_pg_flag = 0;
+        }
+        else if(unalloc_pg_flag == 1){
+          cprintf("|          ...          |\n");
+          unalloc_pg_flag = 2;
+        }
+      }
+      else{
+        // page allocated
+        if(alloc_pg_flag == 0){
+          if(unalloc_pg_flag == 2){
+            cprintf("|   page__unallocated   |\n");
+          }
+          get_padded_hex_addr((i << 22) | (j << 12) | 4095, tmp);
+          cprintf("| %s~", tmp);
+          get_padded_hex_addr((i << 22) | (j << 12) | 0, tmp);
+          cprintf("%s |\n", tmp);
+          alloc_pg_flag = 1;
+          unalloc_pg_flag = 0;
+        }
+        else if(alloc_pg_flag == 1){
+          cprintf("|          ...          |\n");
+          alloc_pg_flag = 2;
+        }
+      }
+    }
+    if(alloc_pg_flag == 2){
+      get_padded_hex_addr((0 << 22) | (0 << 12) | 4095, tmp);
+      cprintf("| %s~", tmp);
+      get_padded_hex_addr((0 << 22) | (0 << 12) | 0, tmp);
+      cprintf ("%s |\n", tmp);
+      alloc_pg_flag = 0;
+    }
+    if(unalloc_pg_flag == 2){
+      cprintf("|   page__unallocated   |\n", tmp);
+      unalloc_pg_flag = 0;
+    }
+  }
+  cprintf("+-----------------------+\n");
+
+  return;
+}
+
+// allocates a proc that actually is a thread (bad bad bad bad)
+static struct proc*
+allocthrd(void)
+{
+  struct proc *t;
+  char *sp;
+
+  acquire(&ptable.lock);
+
+  for(t = ptable.proc; t < &ptable.proc[NPROC]; t++)
+    if(t->state == UNUSED)
+      goto found;
+
+  release(&ptable.lock);
+  return 0;
+
+found:
+  t->state = EMBRYO;
+
+  t->tid = nexttid++;
+
+  release(&ptable.lock);
+
+  // allocate a kernel stack (threads need to context switch 
+  // and interrupt handle as well)
+  if((t->kstack = kalloc()) == 0){
+    t->state = UNUSED;
+    return 0;
+  }
+  sp = t->kstack + KSTACKSIZE;
+
+  // leave room for trap frame
+  sp -= sizeof *t->tf;
+  t->tf = (struct trapframe*)sp;
+
+  // Set up new context to start executing at forkret,
+  // which returns to trapret.
+  sp -= 4;
+  *(uint*)sp = (uint)trapret;
+
+  // leave room for context
+  sp -= sizeof *t->context;
+  t->context = (struct context*)sp;
+
+  // init context to 0
+  memset(t->context, 0, sizeof *t->context);
+
+  // extended instruction pointer of context set to forkret's address 
+  // (we are running forkret as soon as we finish executing clone())
+
+  // forkret returns the flow to usermode (eip is going to first execute the code
+  // that returns to userspace, then continue execution based on ustack contents)
+  t->context->eip = (uint)forkret;
+  return t;
+}
+
+// stack is a pointer to the thread's stackbase
 int clone(char* stack)
 {
-	return -1;
+  // int i, pid;
+  struct proc *thread;
+  struct proc *curthread = myproc();
+
+  // allocate thread
+  if((thread = allocthrd()) == 0){
+    return -1;
+  }
+
+  // share the same pgdir
+  thread->pgdir = curthread->pgdir;
+  thread->sz = curthread->sz;
+  
+  // "a process has only one thread parent" 
+  // "any thread can invoke clone() but a new thread shares the same thread parent"
+  // if is a main thread:      proc->parent is main thread's parent
+  if(curthread->pthread == 1){
+    thread->parent = curthread;
+    curthread->nmthrdcnt++;
+  }
+  // if is not a main thread:  proc->parent is the main thread
+  else{
+    thread->parent = curthread->parent;
+    curthread->parent->nmthrdcnt++;
+  }
+
+  thread->pid = curthread->pid;
+  *thread->tf = *curthread->tf;
+
+  uint* ptr_src = (uint*)(PGROUNDUP(curthread->tf->ebp) - 4);
+  uint* ptr_dst = (uint*)(stack + PGSIZE - 4);
+
+  uint dst = 4 * ((uint)(ptr_dst - ptr_src));
+
+  #if DBGMSG_CLONE
+  char buf[11];
+  #endif
+
+  // copy
+  for(uint i = PGROUNDUP(curthread->tf->ebp) - 4; i >= curthread->tf->esp; i-=4){
+    #if DBGMSG_CLONE
+    get_padded_hex_addr((uint)ptr_src, buf);
+    cprintf("copying %s > ", buf);
+    get_padded_hex_addr((uint)ptr_dst, buf);
+    cprintf("%s [", buf);
+    get_padded_hex_addr((uint)*ptr_src, buf);
+    cprintf("%s]\n", buf);
+    #endif
+    *ptr_dst = *ptr_src;
+    ptr_src--;
+    ptr_dst--;
+  }
+
+  #if DBGMSG_CLONE
+  get_padded_hex_addr(thread->tf->esp, buf);
+  cprintf("thread esp:    %s\n", buf);
+  get_padded_hex_addr(curthread->tf->esp, buf);
+  cprintf("curthread esp: %s\n", buf);
+  get_padded_hex_addr(thread->tf->ebp, buf);
+  cprintf("thread ebp:    %s\n", buf);
+  get_padded_hex_addr(curthread->tf->ebp, buf);
+  cprintf("curthread ebp: %s\n", buf);
+  #endif
+
+  thread->tf->esp += dst;
+  thread->tf->ebp += dst;
+
+  #if DBGMSG_CLONE
+  get_padded_hex_addr(thread->tf->esp, buf);
+  cprintf("shifted esp:   %s\n", buf);
+  get_padded_hex_addr(thread->tf->ebp, buf);
+  cprintf("shifted ebp:   %s\n", buf);
+
+  for(uint i = PGROUNDUP(thread->tf->ebp) - 4; i >= thread->tf->esp; i-=4){
+    get_padded_hex_addr((uint)i, buf);
+    cprintf("%s ", buf);
+    get_padded_hex_addr((uint)(*((uint*)i)), buf);
+    cprintf("[%s]\n", buf);
+  }
+  #endif
+
+  // file shenanigans
+  int i;
+  for(i = 0; i < NOFILE; i++)
+    if(curthread->ofile[i])
+      thread->ofile[i] = filedup(curthread->ofile[i]);
+  thread->cwd = idup(curthread->cwd);
+
+  safestrcpy(thread->name, curthread->name, sizeof(curthread->name));
+
+  // clear %eax so that clone returns 0 in the child thread
+  thread->tf->eax = 0;
+
+  acquire(&ptable.lock);
+  thread->state = RUNNABLE;
+  release(&ptable.lock);
+
+  return thread->tid;
 }
 
 int join(void)
 {
-	return -1;
+  struct proc *thread;
+  int havekids, tid;
+  struct proc *curthread = myproc();
+
+  // if join() is not invoked by a thread parent
+  if (curthread->pthread == 0){
+    return -1;
+  }
+
+  acquire(&ptable.lock);
+  for(;;){
+    // scan through table looking for exited children
+    havekids = 0;
+    for(thread = ptable.proc; thread < &ptable.proc[NPROC]; thread++){
+      if(thread->pid != curthread->pid)
+        continue;
+      havekids = 1;
+      if(thread->state == ZOMBIE){
+        // found one
+        tid = thread->tid;
+        kfree(thread->kstack);
+        thread->kstack = 0;
+        thread->pid = 0;
+
+        // reset tid
+        thread->tid = 0;
+        // reset pthread flag
+        thread->pthread = 0;
+        // reset nmthreadcnt
+        thread->nmthrdcnt = 0;
+        
+        thread->parent = 0;
+        thread->name[0] = 0;
+        thread->killed = 0;
+        thread->state = UNUSED;
+        release(&ptable.lock);
+        return tid;
+      }
+    }
+
+    // no point waiting if we don't have any children
+    // if there is no thread child except for a thread parent
+    if(!havekids || curthread->killed){
+      release(&ptable.lock);
+      return -1;
+    }
+
+    // wait for children to exit.  (See wakeup1 call in proc_exit.)
+    sleep(curthread, &ptable.lock);  //DOC: wait-sleep
+  }
 }

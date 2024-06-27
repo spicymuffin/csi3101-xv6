@@ -107,11 +107,38 @@ memmove(void *vdst, const void *vsrc, int n)
 
 int thread_create(void (*func)(void*), void* arg)
 {
-	return -1;
+  uint alloc = (uint)malloc(4096); // stack cant grow larger than 4KB
+
+  uint tid = clone((char*)alloc);
+
+  #if DBGMSG_THREAD_CREATE
+  printf(1, "alloc val:     %x\n", (uint)alloc);
+  printf(1, "tid addr:      %x\n", (uint)&tid);
+  #endif
+  
+  if (tid == 0){
+    func(arg);
+    free((void*)alloc);
+    exit();
+    return -1;
+  }
+  else if (tid == -1){
+    return -1;
+  }
+  else{
+    return tid;
+  }
 }
 
 int thread_join(int tid)
-{
-	return -1;
+{ 
+  int ret;
+	while ((ret = join()) != -1){
+    // no threads to join
+    if (tid == ret){
+      return 0;
+    }
+  }
+  return -1;
 }
 
