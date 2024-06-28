@@ -90,7 +90,8 @@ sys_uptime(void)
   return xticks;
 }
 
-int sys_clone(void)
+int
+sys_clone(void)
 {
 	char* stack;
 	if(argptr(0, &stack, 4096) < 0 )
@@ -98,12 +99,14 @@ int sys_clone(void)
 	return clone(stack);
 }
 
-int sys_join(void)
+int
+sys_join(void)
 {
 	return join();
 }
 
-int sys_mutex_lock(void)
+int
+sys_mutex_lock(void)
 {
 	char* l;
 	if ( argptr(0, &l, 4) < 0 )
@@ -111,7 +114,8 @@ int sys_mutex_lock(void)
 	return mutex_lock((int*)l);
 }
 
-int sys_mutex_unlock(void)
+int
+sys_mutex_unlock(void)
 {
 	char *l;
 	if ( argptr(0, &l, 4) , 0)
@@ -119,3 +123,22 @@ int sys_mutex_unlock(void)
 	return mutex_unlock((int*)l);
 }
 
+void
+sys_stackdump(void)
+{
+  stackdump();
+  return;
+}
+
+void
+sys_vmemlayout(void)
+{
+  vmemlayout();
+  return;
+}
+
+void
+sys_yield(void)
+{
+  return yield();
+}

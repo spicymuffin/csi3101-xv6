@@ -18,16 +18,21 @@
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
+
+int l;
+
 static int
 argfd(int n, int *pfd, struct file **pf)
 {
   int fd;
   struct file *f;
 
-  if(argint(n, &fd) < 0)
+  if(argint(n, &fd) < 0){
     return -1;
-  if(fd < 0 || fd >= NOFILE || (f=myproc()->ofile[fd]) == 0)
+  }
+  if(fd < 0 || fd >= NOFILE || (f=myproc()->ofile[fd]) == 0){
     return -1;
+  }
   if(pfd)
     *pfd = fd;
   if(pf)
@@ -78,16 +83,22 @@ sys_read(void)
   return fileread(f, p, n);
 }
 
+int l = 0;
+
 int
 sys_write(void)
 {
   struct file *f;
   int n;
   char *p;
+  
 
   if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argptr(1, &p, n) < 0)
     return -1;
-  return filewrite(f, p, n);
+
+  int ret = filewrite(f, p, n);
+
+  return ret;
 }
 
 int

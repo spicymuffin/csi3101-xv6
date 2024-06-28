@@ -35,14 +35,18 @@ printint(int fd, int xx, int base, int sgn)
     putc(fd, buf[i]);
 }
 
+int l;
+
 // Print to the given fd. Only understands %d, %x, %p, %s.
 void
 printf(int fd, const char *fmt, ...)
 {
+  
   char *s;
   int c, i, state;
   uint *ap;
 
+  mutex_lock(&l);
   state = 0;
   ap = (uint*)(void*)&fmt + 1;
   for(i = 0; fmt[i]; i++){
@@ -82,4 +86,5 @@ printf(int fd, const char *fmt, ...)
       state = 0;
     }
   }
+  mutex_unlock(&l);
 }

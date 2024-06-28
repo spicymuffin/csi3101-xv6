@@ -110,7 +110,9 @@ extern int sys_clone(void);
 extern int sys_join(void);
 extern int sys_mutex_lock(void);
 extern int sys_mutex_unlock(void);
- 
+extern int sys_stackdump(void);
+extern int sys_vmemlayout(void);
+extern int sys_yield(void);
 
 static int (*syscalls[])(void) = {
 [SYS_fork]    sys_fork,
@@ -134,13 +136,16 @@ static int (*syscalls[])(void) = {
 [SYS_link]    sys_link,
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
-[SYS_swapread]	sys_swapread,
-[SYS_swapwrite] sys_swapwrite,
-[SYS_frees] sys_frees,
-[SYS_join]	sys_join,
-[SYS_clone]	sys_clone,
-[SYS_mutex_lock]	sys_mutex_lock,
-[SYS_mutex_unlock]	sys_mutex_unlock,
+[SYS_swapread]	      sys_swapread,
+[SYS_swapwrite]       sys_swapwrite,
+[SYS_frees]           sys_frees,
+[SYS_join]	          sys_join,
+[SYS_clone]	          sys_clone,
+[SYS_mutex_lock]	    sys_mutex_lock,
+[SYS_mutex_unlock]	  sys_mutex_unlock,
+[SYS_stackdump]       sys_stackdump,
+[SYS_vmemlayout]      sys_vmemlayout,
+[SYS_yield]           sys_yield,
 };
 
 void

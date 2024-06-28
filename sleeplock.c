@@ -52,12 +52,67 @@ holdingsleep(struct sleeplock *lk)
   return r;
 }
 
-int mutex_lock(volatile int* l)
+// Locks descriptions
+
+// Lock                    Description
+// bcache.lock             Protects allocation of block buffer cache entries
+// cons.lock               Serializes access to console hardware, avoids intermixed output
+// ftable.lock             Serializes allocation of a struct file in file table
+// icache.lock             Protects allocation of inode cache entries
+// idelock                 Serializes access to disk hardware and disk queue
+// kmem.lock               Serializes allocation of memory
+// log.lock                Serializes operations on the transaction log
+// pipe’s p->lock          Serializes operations on each pipe
+// ptable.lock             Serializes context switching, and operations on proc->state and proctable
+// tickslock               Serializes operations on the ticks counter
+// inode’s ip->lock        Serializes operations on each inode and its content
+// buf’s b->lock           Serializes operations on each block buffer
+
+// sleeplock's mutexlock   Protects the switch to sleeping state of the mutex locked process
+
+struct spinlock mutexlk;
+
+int
+mutex_lock(volatile int *l)
 {
+  acquire(&mutexlk);
+  while(xchg((uint*)l, 1) != 0){
+    sleep((void*)l, &mutexlk);
+  }
+  release(&mutexlk);
+  return 0; 
+}
+
+int
+mutex_unlock(volatile int *l)
+{
+  acquire(&mutexlk);
+  wakeup((void*)l);
+  *l = 0;
+  release(&mutexlk);
   return 0;
 }
 
-int mutex_unlock(volatile int* l)
-{
-  return 0;
-}
+// struct spinlock printlk;
+
+// int
+// print_mutex_lock(volatile int *l)
+// {
+//   acquire(&printlk);
+//   while(xchg((uint*)l, 1) != 0){
+//     sleep((void*)l, &printlk);
+//   }
+//   release(&printlk);
+//   return 0; 
+// }
+
+// int
+// print_mutex_unlock(volatile int *l)
+// {
+//   acquire(&printlk);
+//   while(xchg((uint*)l, 1) != 0){
+//     sleep((void*)l, &printlk);
+//   }
+//   release(&printlk);
+//   return 0; 
+// }

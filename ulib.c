@@ -3,6 +3,7 @@
 #include "fcntl.h"
 #include "user.h"
 #include "x86.h"
+#include "param.h"
 
 char*
 strcpy(char *s, const char *t)
@@ -105,13 +106,62 @@ memmove(void *vdst, const void *vsrc, int n)
   return vdst;
 }
 
-int thread_create(void (*func)(void*), void* arg)
+int
+thread_create(void (*func)(void*), void* arg)
 {
-	return -1;
+  #if DBGMSG_THREAD_CREATE
+  printf(1, "frees before thread stack allocation: %d\n", frees());
+  #endif
+
+  uint alloc = (uint)malloc(4096); // stack cant grow larger than 4KB
+
+  #if DBGMSG_THREAD_CREATE
+  printf(1, "frees after thread stack allocation:  %d\n", frees());
+  #endif
+
+  uint tid = clone((char*)alloc);
+
+  // from here and below two threads are running
+
+  #if DBGMSG_THREAD_CREATE
+  printf(1, "alloc val:     %x\n", (uint)alloc);
+  printf(1, "tid addr:      %x\n", (uint)&tid);
+  #endif
+
+  if (tid == 0){
+    func(arg);
+    #if DBGMSG_THREAD_CREATE
+    printf(1, "frees before thread stack deallocation:  %d\n", frees());
+    #endif
+    free((void*)alloc);
+    #if DBGMSG_THREAD_CREATE
+    printf(1, "frees after thread stack deallocation:  %d\n", frees());
+    #endif
+    exit();
+    return -1;
+  }
+  else if (tid == -1){
+    // if clone failed, no child thread even exits.
+    // -> just free allocated resources (the rest is freed inside clone)
+    free((void*)alloc);
+    return -1;
+  }
+  else{
+    return tid;
+  }
 }
 
-int thread_join(int tid)
-{
-	return -1;
+int
+thread_join(int tid)
+{ 
+  int ret;
+	while ((ret = join()) != -1){
+    // thread joined is the thread that we are waiting for
+    if (tid == ret){
+      return 0;
+    }
+  }
+  // no threads to join or invalid call
+  return -1;
 }
 

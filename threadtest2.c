@@ -6,7 +6,7 @@
 volatile int s = 0;
 int l = 0;
 
-void thread_main(void* arg)
+void child_thread(void* arg)
 {
 	int i;
 	for (i=0; i<10000; ++i) {
@@ -23,8 +23,8 @@ void thread_main(void* arg)
 int main(int argc, char** argv)
 {
 	int tid1, tid2;
-	tid1 = thread_create(thread_main, 0);
-	tid2 = thread_create(thread_main, 0);
+	tid1 = thread_create(child_thread, 0);
+	tid2 = thread_create(child_thread, 0);
 
 	thread_join(tid1);
 	thread_join(tid2);
