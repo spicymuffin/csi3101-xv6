@@ -79,6 +79,8 @@ int main(int argc, char **argv)
     write(1, buf, sizeof(buf));
     write(1, "\n", 1);
 
+    close(fd1);
+
     printf(1, "frees after: %d\n", frees());
     exit();
 }

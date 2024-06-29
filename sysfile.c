@@ -19,7 +19,7 @@
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 
-int l;
+int lk;
 
 static int
 argfd(int n, int *pfd, struct file **pf)
@@ -80,10 +80,19 @@ sys_read(void)
 
   if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argptr(1, &p, n) < 0)
     return -1;
-  return fileread(f, p, n);
-}
 
-int l = 0;
+  #if THREADSAFE_FILEOP
+  mutex_lock(&f->filelk);
+  #endif
+
+  int ret = fileread(f, p, n);
+
+  #if THREADSAFE_FILEOP
+  mutex_unlock(&f->filelk);
+  #endif
+
+  return ret;
+}
 
 int
 sys_write(void)
@@ -96,7 +105,15 @@ sys_write(void)
   if(argfd(0, 0, &f) < 0 || argint(2, &n) < 0 || argptr(1, &p, n) < 0)
     return -1;
 
+  #if THREADSAFE_FILEOP
+  mutex_lock(&f->filelk);
+  #endif
+
   int ret = filewrite(f, p, n);
+
+  #if THREADSAFE_FILEOP
+  mutex_unlock(&f->filelk);
+  #endif
 
   return ret;
 }
@@ -109,8 +126,19 @@ sys_close(void)
 
   if(argfd(0, &fd, &f) < 0)
     return -1;
+
+  #if THREADSAFE_FILEOP
+  mutex_lock(&f->filelk);
+  #endif
+
   myproc()->ofile[fd] = 0;
+  broadcast_close(fd);
   fileclose(f);
+
+  #if THREADSAFE_FILEOP
+  mutex_unlock(&f->filelk);
+  #endif
+  
   return 0;
 }
 
@@ -304,6 +332,8 @@ sys_open(void)
   if(argstr(0, &path) < 0 || argint(1, &omode) < 0)
     return -1;
 
+  // below protected by log's lock
+
   begin_op();
 
   if(omode & O_CREATE){
@@ -335,11 +365,23 @@ sys_open(void)
   iunlock(ip);
   end_op();
 
+  // we need to protect filedescriptor
+
+  #if THREADSAFE_FILEOP
+  mutex_lock(&f->filelk);
+  #endif
+
   f->type = FD_INODE;
   f->ip = ip;
   f->off = 0;
   f->readable = !(omode & O_WRONLY);
   f->writable = (omode & O_WRONLY) || (omode & O_RDWR);
+  broadcast_open(fd);
+
+  #if THREADSAFE_FILEOP
+  mutex_unlock(&f->filelk);
+  #endif
+
   return fd;
 }
 

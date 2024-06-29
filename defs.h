@@ -122,6 +122,8 @@ void            wakeup(void*);
 void            yield(void);
 void            stackdump(void);
 void            vmemlayout(void);
+void            broadcast_close(int);
+void            broadcast_open(int);
 
 // swtch.S
 void            swtch(struct context**, struct context*);

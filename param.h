@@ -22,5 +22,7 @@
 #define DBGMSG_WAIT             0 
 #define DBGMSG_MUTEX_LOCK       0 
 #define DBGMSG_MUTEX_UNLOCK     0 
+#define DBGMSG_FORK             0 
 #define DBGMSG_                 0 
-#define DBGMSG_                 0 
+
+#define THREADSAFE_FILEOP       1

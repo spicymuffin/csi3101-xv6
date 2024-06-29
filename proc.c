@@ -240,6 +240,10 @@ fork(void)
 
   release(&ptable.lock);
 
+  #if DBGMSG_FORK
+  cprintf("[DBGMSG] fork: forked new process. pid=%d, tid=%d, name=%s\n", np->pid, np->tid, np->name);
+  #endif
+
   return pid;
 }
 
@@ -253,20 +257,45 @@ exit(void)
   struct proc *p;
   int fd;
 
+  #if DBGMSG_EXIT
+  cprintf("[DBGMSG] exit: pid=%d, tid=%d\n", curproc->pid, curproc->tid);
+  #endif
+
   if(curproc == initproc)
     panic("init exiting");
 
   // Close all open files.
-  for(fd = 0; fd < NOFILE; fd++){
-    if(curproc->ofile[fd]){
-      fileclose(curproc->ofile[fd]);
-      curproc->ofile[fd] = 0;
+  struct proc *iter;
+  int addrspcref_cnt = 0;
+  for(iter = ptable.proc; iter < &ptable.proc[NPROC]; iter++){
+    if(curproc->addrspcref == iter->addrspcref){
+      addrspcref_cnt++;
     }
   }
 
-  begin_op();
-  iput(curproc->cwd);
-  end_op();
+  #if DBGMSG_EXIT
+  cprintf("[DBGMSG] exit: cleaning up ofile array and cwd\n");
+  #endif
+  for(fd = 0; fd < NOFILE; fd++){
+    if(curproc->ofile[fd]){
+      // if not referenced anywhere, actually close the file
+      if(addrspcref_cnt == 1){
+        #if DBGMSG_EXIT
+        cprintf("[DBGMSG] exit: closing file. fd=%d\n", fd);
+        #endif
+        fileclose(curproc->ofile[fd]);
+      }
+      curproc->ofile[fd] = 0;
+    }
+  }
+  if (addrspcref_cnt == 1){
+    #if DBGMSG_EXIT
+    cprintf("[DBGMSG] exit: closing cwd\n");
+    #endif
+    begin_op();
+    iput(curproc->cwd);
+    end_op();
+  }
   curproc->cwd = 0;
 
   acquire(&ptable.lock);
@@ -286,7 +315,7 @@ exit(void)
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->parent == curproc){
       #if DBGMSG_EXIT
-      cprintf("[DBGMSG] exit: passing orphan to initproc ");
+      cprintf("[DBGMSG] exit: passing orphan to initproc pid=%d, tid=%d ", p->pid, p->tid);
       #endif
       if(p->pthread == 0){
         #if DBGMSG_EXIT
@@ -842,7 +871,8 @@ found:
 }
 
 // stack is a pointer to the thread's stackbase
-int clone(char* stack)
+int 
+clone(char* stack)
 {
   // int i, pid;
   struct proc *thread;
@@ -929,8 +959,8 @@ int clone(char* stack)
   int i;
   for(i = 0; i < NOFILE; i++)
     if(curthread->ofile[i])
-      thread->ofile[i] = filedup(curthread->ofile[i]);
-  thread->cwd = idup(curthread->cwd);
+      thread->ofile[i] = curthread->ofile[i];
+  thread->cwd = curthread->cwd;
 
   safestrcpy(thread->name, curthread->name, sizeof(curthread->name));
 
@@ -944,7 +974,8 @@ int clone(char* stack)
   return thread->tid;
 }
 
-int join(void)
+int 
+join(void)
 {
   struct proc *thread;
   int havekids, tid;
@@ -1038,5 +1069,33 @@ int join(void)
 
     // wait for children to exit.  (See wakeup1 call in proc_exit.)
     sleep(curthread, &ptable.lock);  //DOC: wait-sleep
+  }
+}
+
+void 
+broadcast_close(int fd)
+{
+  struct proc* curproc = myproc();
+  struct proc* iter;
+
+  for(iter = ptable.proc; iter < &ptable.proc[NPROC]; iter++){
+    // same address space -> related
+    if(curproc->addrspcref == iter->addrspcref && iter != curproc){
+      iter->ofile[fd] = 0;
+    }
+  }
+}
+
+void 
+broadcast_open(int fd)
+{
+  struct proc* curproc = myproc();
+  struct proc* iter;
+
+  for(iter = ptable.proc; iter < &ptable.proc[NPROC]; iter++){
+    // same address space -> related
+    if(curproc->addrspcref == iter->addrspcref && iter != curproc){
+      iter->ofile[fd] = curproc->ofile[fd];
+    }
   }
 }
