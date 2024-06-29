@@ -219,8 +219,6 @@ fork(void)
 
   // forked -> is a process's main thread
   np->pthread = 1;
-  // addrspcref is pid
-  np->addrspcref = np->pid;
 
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
@@ -261,18 +259,17 @@ exit(void)
   cprintf("[DBGMSG] exit: pid=%d, tid=%d\n", curproc->pid, curproc->tid);
   #endif
 
-  if(curproc == initproc)
-    panic("init exiting");
+  if(curproc == initproc) panic("init exiting");
 
-  // Close all open files.
   struct proc *iter;
   int addrspcref_cnt = 0;
   for(iter = ptable.proc; iter < &ptable.proc[NPROC]; iter++){
-    if(curproc->addrspcref == iter->addrspcref){
+    if(curproc->pgdir == iter->pgdir){
       addrspcref_cnt++;
     }
   }
 
+  // Close all open files.
   #if DBGMSG_EXIT
   cprintf("[DBGMSG] exit: cleaning up ofile array and cwd\n");
   #endif
@@ -305,10 +302,10 @@ exit(void)
   cprintf("            |  pid=%d\n", curproc->pid);
   cprintf("            |  tid=%d\n", curproc->tid);
   cprintf("            |  pthread=%d\n", curproc->pthread);
-  cprintf("            |  addrspcref=%d\n", curproc->addrspcref);
+  cprintf("            |  pgdir=%p\n", curproc->pgdir);
   #endif
 
-  // Parent might be sleeping in wait().
+  // Parent might be sleeping in wait() or in join()!
   wakeup1(curproc->parent);
 
   // Pass abandoned children to init.
@@ -352,7 +349,7 @@ wait(void)
   cprintf("            |  pid=%d\n", curproc->pid);
   cprintf("            |  tid=%d\n", curproc->tid);
   cprintf("            |  pthread=%d\n", curproc->pthread);
-  cprintf("            |  addrspcref=%d\n", curproc->addrspcref);
+  cprintf("            |  pgdir=%p\n", curproc->pgdir);
   #endif
 
   acquire(&ptable.lock);
@@ -360,7 +357,6 @@ wait(void)
     // Scan through table looking for exited children.
     havemthreadkids = 0;
     havenmthreadkids = 0;
-    
 
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
       if(p->parent != curproc)
@@ -377,7 +373,7 @@ wait(void)
       cprintf("            |  pid=%d\n", p->pid);
       cprintf("            |  tid=%d\n", p->tid);
       cprintf("            |  pthread=%d\n", p->pthread);
-      cprintf("            |  addrspcref=%d\n", p->addrspcref);
+      cprintf("            |  pgdir=%p\n", p->pgdir);
       #endif
 
       // recover resources of a process if all non main threads are dead
@@ -390,17 +386,15 @@ wait(void)
         struct proc *iter;
         int addrspcref_cnt = 0;
         for(iter = ptable.proc; iter < &ptable.proc[NPROC]; iter++){
-          if(p->addrspcref == iter->addrspcref){
+          if(p->pgdir == iter->pgdir){
             addrspcref_cnt++;
           }
         }
 
         #if DBGMSG_WAIT
-        cprintf("[DBGMSG] wait: addrspcref=%d\n", p->addrspcref);
+        cprintf("[DBGMSG] wait: pgdir=%p\n", p->pgdir);
         cprintf("[DBGMSG] wait: addrspcref_cnt=%d\n", addrspcref_cnt);
         #endif
-
-        p->addrspcref = 0;
 
         if(addrspcref_cnt == 1){
           #if DBGMSG_WAIT
@@ -408,14 +402,13 @@ wait(void)
           #endif
           freevm(p->pgdir);
         }
-        p->pid = 0;
 
+        // reset pid
+        p->pid = 0;
         // reset tid
         p->tid = 0;
         // reset pthread flag
         p->pthread = 0;
-        // reset addrspcref
-        p->addrspcref = 0;
 
         p->parent = 0;
         p->name[0] = 0;
@@ -837,7 +830,7 @@ found:
 
   release(&ptable.lock);
 
-  // allocate a kernel stack (threads need to context switch 
+  // allocate a kernel stack (threads need to context switch
   // and interrupt handle as well)
   if((t->kstack = kalloc()) == 0){
     t->state = UNUSED;
@@ -861,7 +854,7 @@ found:
   // init context to 0
   memset(t->context, 0, sizeof *t->context);
 
-  // extended instruction pointer of context set to forkret's address 
+  // extended instruction pointer of context set to forkret's address
   // (we are running forkret as soon as we finish executing clone())
 
   // forkret returns the flow to usermode (eip is going to first execute the code
@@ -871,7 +864,7 @@ found:
 }
 
 // stack is a pointer to the thread's stackbase
-int 
+int
 clone(char* stack)
 {
   // int i, pid;
@@ -886,8 +879,8 @@ clone(char* stack)
   // share the same pgdir
   thread->pgdir = curthread->pgdir;
   thread->sz = curthread->sz;
-  
-  // "a process has only one thread parent" 
+
+  // "a process has only one thread parent"
   // "any thread can invoke clone() but a new thread shares the same thread parent"
   // if is a main thread:      proc->parent is main thread's parent
   if(curthread->pthread == 1){
@@ -899,7 +892,6 @@ clone(char* stack)
   }
 
   thread->pid = curthread->pid;
-  thread->addrspcref = curthread->pid;
 
   *thread->tf = *curthread->tf;
 
@@ -974,7 +966,7 @@ clone(char* stack)
   return thread->tid;
 }
 
-int 
+int
 join(void)
 {
   struct proc *thread;
@@ -986,7 +978,7 @@ join(void)
   cprintf("            |  pid=%d\n", curthread->pid);
   cprintf("            |  tid=%d\n", curthread->tid);
   cprintf("            |  pthread=%d\n", curthread->pthread);
-  cprintf("            |  addrspcref=%d\n", curthread->addrspcref);
+  cprintf("            |  pgdir=%p\n", curthread->pgdir);
   #endif
 
   // if join() is not invoked by a thread parent
@@ -1012,7 +1004,7 @@ join(void)
       cprintf("            |  pid=%d\n", thread->pid);
       cprintf("            |  tid=%d\n", thread->tid);
       cprintf("            |  pthread=%d\n", thread->pthread);
-      cprintf("            |  addrspcref=%d\n", thread->addrspcref);
+      cprintf("            |  pgdir=%p\n", thread->pgdir);
       #endif
 
       if(thread->state == ZOMBIE){
@@ -1024,21 +1016,20 @@ join(void)
         struct proc *iter;
         int addrspcref_cnt = 0;
         for(iter = ptable.proc; iter < &ptable.proc[NPROC]; iter++){
-          if(thread->addrspcref == iter->addrspcref){
+          if(thread->pgdir == iter->pgdir){
             addrspcref_cnt++;
           }
         }
 
         #if DBGMSG_JOIN
-        cprintf("[DBGMSG] join: addrspcref=%d\n", thread->addrspcref);
+        cprintf("[DBGMSG] join: pgdir=%p\n", thread->pgdir);
         cprintf("[DBGMSG] join: addrspcref_cnt=%d\n", addrspcref_cnt);
         #endif
 
-        thread->addrspcref = 0;
 
         if(addrspcref_cnt == 1){
           #if DBGMSG_JOIN
-          cprintf("[DBGMSG] join: freeing address space   (=%d)\n", thread->addrspcref);
+          cprintf("[DBGMSG] join: freeing address space   (=%p)\n", thread->pgdir);
           #endif
           freevm(thread->pgdir);
         }
@@ -1048,9 +1039,7 @@ join(void)
         thread->tid = 0;
         // reset pthread flag
         thread->pthread = 0;
-        // reset addrspcref
-        thread->addrspcref = 0;
-        
+
         thread->parent = 0;
         thread->name[0] = 0;
         thread->killed = 0;
@@ -1072,7 +1061,7 @@ join(void)
   }
 }
 
-void 
+void
 broadcast_close(int fd)
 {
   struct proc* curproc = myproc();
@@ -1080,13 +1069,13 @@ broadcast_close(int fd)
 
   for(iter = ptable.proc; iter < &ptable.proc[NPROC]; iter++){
     // same address space -> related
-    if(curproc->addrspcref == iter->addrspcref && iter != curproc){
+    if(curproc->pgdir == iter->pgdir && iter != curproc){
       iter->ofile[fd] = 0;
     }
   }
 }
 
-void 
+void
 broadcast_open(int fd)
 {
   struct proc* curproc = myproc();
@@ -1094,7 +1083,7 @@ broadcast_open(int fd)
 
   for(iter = ptable.proc; iter < &ptable.proc[NPROC]; iter++){
     // same address space -> related
-    if(curproc->addrspcref == iter->addrspcref && iter != curproc){
+    if(curproc->pgdir == iter->pgdir && iter != curproc){
       iter->ofile[fd] = curproc->ofile[fd];
     }
   }

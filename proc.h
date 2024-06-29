@@ -51,7 +51,6 @@ struct proc {
   char name[16];               // Process name (debugging)
   int tid;                     // Thread ID
   int pthread;                 // Is this a parent thread
-  int addrspcref;              // Number of address space refs
 };
 
 // Process memory is laid out contiguously, low addresses first:

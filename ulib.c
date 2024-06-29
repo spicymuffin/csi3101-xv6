@@ -151,14 +151,19 @@ thread_create(void (*func)(void*), void* arg)
   }
 }
 
+
+
 int
 thread_join(int tid)
-{ 
+{
   int ret;
 	while ((ret = join()) != -1){
     // thread joined is the thread that we are waiting for
     if (tid == ret){
       return 0;
+    }
+    else{
+      
     }
   }
   // no threads to join or invalid call

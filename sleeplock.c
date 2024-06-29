@@ -80,7 +80,7 @@ mutex_lock(volatile int *l)
     sleep((void*)l, &mutexlk);
   }
   release(&mutexlk);
-  return 0; 
+  return 0;
 }
 
 int
