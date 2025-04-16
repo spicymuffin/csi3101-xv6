@@ -7,6 +7,13 @@
 #include "proc.h"
 #include "spinlock.h"
 
+#include "eevdf.h"
+
+int total_weight = 0;
+int virtual_time = 0;
+
+extern int sys_uptime(void);
+
 struct {
   struct spinlock lock;
   struct proc proc[NPROC];
@@ -140,6 +147,9 @@ userinit(void)
   p->tf->esp = PGSIZE;
   p->tf->eip = 0;  // beginning of initcode.S
   p->weight = 1;
+
+  total_weight += p->weight;
+
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
 
@@ -150,6 +160,7 @@ userinit(void)
   acquire(&ptable.lock);
 
   p->state = RUNNABLE;
+  eevdf_enqueue_process(p);
 
   release(&ptable.lock);
 }
@@ -202,6 +213,9 @@ fork(void)
   np->weight = curproc->weight;
   *np->tf = *curproc->tf;
 
+  // np->request_tick = curproc->request_tick;??????? otherwise garbage value????
+  total_weight += np->weight;
+
   // Clear %eax so that fork returns 0 in the child.
   np->tf->eax = 0;
 
@@ -216,6 +230,7 @@ fork(void)
 
   acquire(&ptable.lock);
 
+  eevdf_enqueue_process(np);
   np->state = RUNNABLE;
 
   release(&ptable.lock);
@@ -265,6 +280,10 @@ exit(void)
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
+
+  // process is dead, modify total weight
+  total_weight -= curproc->weight;
+
   sched();
   panic("zombie exit");
 }
@@ -321,6 +340,174 @@ wait(void)
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
+
+// note: scale before division
+
+int compute_virtual_eligible(struct proc* p)
+{
+  // vtime_init is already scaled
+  return p->virtual_time_init + (p->used_time * SCALE) / p->weight;
+}
+
+int compute_virtual_deadline(struct proc* p)
+{
+  // veligible is already scaled
+  return p->virtual_eligible + (p->request_tick * SCALE) / p->weight;
+}
+
+int compute_lag(struct proc* p)
+{
+  // vtime and vtime_init are already scaled
+  return ((p->weight) * (virtual_time - p->virtual_time_init) - (p->used_time * SCALE));
+}
+
+void update_virtual_time()
+{
+  if (total_weight > 0){
+    if (total_weight >= SCALE)
+      {
+        // the spec says:
+        // "If the total weight exceeds the SCALE value, it is fixed to 1."
+        // i assume its talking about (SCALE/total_weight) becoming 1...?
+        virtual_time += 1;
+      }
+      else
+      {
+        virtual_time += SCALE / total_weight;
+      }
+  }
+}
+
+void print_fake_float(int value)
+{
+    if (SCALE <= 0) return; // avoid division by zero
+
+    if (value < 0) {
+        cprintf("-");
+        value = -value;
+    }
+
+    int int_part = value / SCALE;
+    int frac_part = value % SCALE;
+
+    cprintf("%d.", int_part);
+
+    // pad with leading zeros based on scale
+    int padding = SCALE / 10;
+    while (padding > 1 && frac_part < padding) {
+        cprintf("0");
+        padding /= 10;
+    }
+
+    cprintf("%d", frac_part);
+}
+
+// hold ptable.lock
+#define INT_MAX 0x7FFFFFFF // 0b01111111111111111111111111111111
+
+struct proc* find_run_candidate()
+{
+  int lowest_virtual_deadline = INT_MAX;
+
+  struct proc* candidate_proc = 0;
+
+  #if DEBUG_STORE_LAG
+  for (struct proc *p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    p->lag = compute_lag(p);
+  }
+  #endif
+
+  // iterate over the ptable to find the candidate
+  for (struct proc *p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    int lag = compute_lag(p);
+    // If a process’s virtual eligible time is less than the current virtual time, the process is considered eligible, and its lag should be reset to 0
+    if (p->virtual_eligible < virtual_time)
+    {
+      lag = 0;
+    }
+
+    // "Only RUNNABLE processes with Lag >= 0 are eligible for execution"
+    if ((p->state == RUNNABLE && lag >= 0))
+    {
+      // find one with the smallest virtual deadline:
+      // if they have the same virtual deadline, pick the one with the lowest PID
+      if (p->virtual_deadline < lowest_virtual_deadline)
+      {
+        lowest_virtual_deadline = p->virtual_deadline;
+        candidate_proc = p;
+      }
+      else if (p->virtual_deadline == lowest_virtual_deadline)
+      {
+        if (p->pid < candidate_proc->pid)
+        {
+          // no need to set lowest_virtual_deadline again
+          candidate_proc = p;
+        }
+      }
+      else
+      {
+        // this process has a higher virtual deadline than the current candidate
+        // will be optimized by compiler
+        continue;
+      }
+    }
+  }
+
+  // can be null if no process is found btw
+  return candidate_proc;
+}
+
+void eevdf_enqueue_process(struct proc* p)
+{
+  p->virtual_time_init = virtual_time;
+  p->used_time = 0;
+  p->virtual_eligible = compute_virtual_eligible(p); // = virtual_time_init bc used_time = 0
+  p->virtual_deadline = compute_virtual_deadline(p); // = virtual_eligible + request_tick / weight
+}
+
+void eevdf_update_proc(struct proc* p)
+{
+  p->virtual_eligible = compute_virtual_eligible(p);
+  p->virtual_deadline = compute_virtual_deadline(p);
+}
+
+void print_scheduler_metadata()
+{
+  cprintf("---------GLOBAL SCHED METADATA---------\n");
+  cprintf("TOTAL WEIGHT: %d\n", total_weight);
+  cprintf("VIRTUAL TIME: ");
+  print_fake_float(virtual_time);
+  cprintf("\n");
+  cprintf("SYS UPTIME: %d\n", sys_uptime());
+  cprintf("---------------------------------------\n");
+  for (struct proc *p = ptable.proc; p < &ptable.proc[NPROC]; p++)
+  {
+    if (p->state == RUNNABLE)
+    {
+      cprintf("PID: %d\n", p->pid);
+      cprintf("NAME: %s\n", p->name);
+      cprintf("VELIGIBLE: ");
+      print_fake_float(p->virtual_eligible);
+      cprintf("\n");
+      cprintf("VTIME INIT: ");
+      print_fake_float(p->virtual_time_init);
+      cprintf("\n");
+      cprintf("VDEADLINE: ");
+      print_fake_float(p->virtual_deadline);
+      cprintf("\n");
+      cprintf("LAG: ");
+      print_fake_float(compute_lag(p));
+      cprintf("\n");
+      cprintf("USED TIME: %d\n", p->used_time);
+      cprintf("REQUEST TICK: %d\n", p->request_tick);
+      cprintf("WEIGHT: %d\n", p->weight);
+      cprintf("---------------------------------------\n");
+    }
+  }
+}
+
 void
 scheduler(void)
 {
@@ -334,26 +521,52 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
 
-      // Switch to chosen process.  It is the process's job
-      // to release ptable.lock and then reacquire it
-      // before jumping back to us.
-      c->proc = p;
-      switchuvm(p);
-      p->state = RUNNING;
+    // find candidate process
+    p = find_run_candidate();
 
-      swtch(&(c->scheduler), p->context);
-      switchkvm();
-
-      // Process is done running for now.
-      // It should have changed its p->state before coming back.
-      c->proc = 0;
+    if (p == 0)
+    {
+      // no process found, release lock and spin some more
+      release(&ptable.lock);
+      continue;
     }
-    release(&ptable.lock);
 
+    // print_scheduler_metadata();
+
+    // volatile int i;
+    // for(i = 0; i < 100000000; i++) {} // spin for a bit
+    // for(i = 0; i < 100000000; i++) {} // spin for a bit
+    // for(i = 0; i < 100000000; i++) {} // spin for a bit
+    // for(i = 0; i < 100000000; i++) {} // spin for a bit
+    // for(i = 0; i < 100000000; i++) {} // spin for a bit
+
+    // Switch to chosen process.  It is the process's job
+    // to release ptable.lock and then reacquire it
+    // before jumping back to us.
+    c->proc = p;
+    switchuvm(p);
+    p->state = RUNNING;
+
+    swtch(&(c->scheduler), p->context);
+
+    // increment used_time by QUANTUM
+    p->used_time += QUANTUM;
+
+    // update the virtual params of the process
+    eevdf_update_proc(p);
+    print_scheduler_metadata();
+
+    // process used one tick NO YOU RETARD
+    // p->used_time += 1;
+
+    switchkvm();
+
+    // Process is done running for now.
+    // It should have changed its p->state before coming back.
+    c->proc = 0;
+
+    release(&ptable.lock);
   }
 }
 
@@ -441,6 +654,10 @@ sleep(void *chan, struct spinlock *lk)
   p->chan = chan;
   p->state = SLEEPING;
 
+  // modify total weight by weight of the process that is going to sleep
+  // this is because the process is not runnable anymore
+  total_weight -= p->weight;
+
   sched();
 
   // Tidy up.
@@ -463,7 +680,15 @@ wakeup1(void *chan)
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if(p->state == SLEEPING && p->chan == chan)
+    {
       p->state = RUNNABLE;
+
+      // woken up, modify total weight back
+      total_weight += p->weight;
+
+      // state change to RUNNABLE -> enqueue process
+      eevdf_enqueue_process(p);
+    }
 }
 
 // Wake up all processes sleeping on chan.
@@ -489,7 +714,13 @@ kill(int pid)
       p->killed = 1;
       // Wake process from sleep if necessary.
       if(p->state == SLEEPING)
+      {
         p->state = RUNNABLE;
+        // woken up, modify total weight back
+        total_weight += p->weight;
+        // state change to RUNNABLE -> enqueue process
+        eevdf_enqueue_process(p);
+      }
       release(&ptable.lock);
       return 0;
     }
@@ -551,11 +782,20 @@ int sched_setattr(int request_tick, int weight)
   if(weight < 1) weight = 1;
   if(weight > 5) weight = 5;
 
+  // added because of im worried of racing with timer ticks
+  acquire(&ptable.lock);
+
+  // sanity checks first, then update total weight
+  total_weight += weight - p->weight;
+
   p->request_tick = request_tick;
   p->weight = weight;
 
+  eevdf_enqueue_process(p);
+
+  release(&ptable.lock);
+
   // Hint: When implementing the EEVDF scheduler, total weight needs to be updated here.
-  
   return 0;
 }
 

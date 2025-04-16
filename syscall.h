@@ -25,3 +25,4 @@
 #define SYS_yield  24
 #define SYS_sched_setattr 25
 #define SYS_sched_getattr 26
+#define SYS_psm    27

@@ -1,0 +1,6 @@
+#define SCALE 1000
+
+#define QUANTUM 10
+
+#define DEBUG_STORE_LAG 1
+#define DEBUG_STORE_USED_TIME 1

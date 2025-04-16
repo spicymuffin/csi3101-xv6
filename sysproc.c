@@ -120,3 +120,8 @@ int sys_sched_getattr(void) {
 
     return sched_getattr(request_tick,weight);
 }
+
+int sys_psm(void) {
+  print_scheduler_metadata();
+  return 0;
+}

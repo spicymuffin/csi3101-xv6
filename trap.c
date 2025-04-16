@@ -32,6 +32,10 @@ idtinit(void)
   lidt(idt, sizeof(idt));
 }
 
+// set by scheduler
+extern int total_weight;
+extern int virtual_time;
+
 //PAGEBREAK: 41
 void
 trap(struct trapframe *tf)
@@ -54,6 +58,8 @@ trap(struct trapframe *tf)
       wakeup(&ticks);
       release(&tickslock);
     }
+    update_virtual_time();
+    // update virtual time
     lapiceoi();
     break;
   case T_IRQ0 + IRQ_IDE:
@@ -109,6 +115,20 @@ trap(struct trapframe *tf)
   // if(myproc() && myproc()->state == RUNNING &&
   //   tf->trapno == T_IRQ0+IRQ_TIMER)
   //  yield();
+
+  // "If a process transitions to the RUNNING state, yield() will be called after time quantum"
+  struct proc *p = myproc();
+  if(
+    p &&
+    p->state == RUNNING &&
+    tf->trapno == T_IRQ0 + IRQ_TIMER
+    )
+  {
+    if (ticks % QUANTUM == 0){
+      yield();
+      // print_scheduler_metadata();
+    }
+  }
 
   // Check if the process has been killed since we yielded
   if(myproc() && myproc()->killed && (tf->cs&3) == DPL_USER)

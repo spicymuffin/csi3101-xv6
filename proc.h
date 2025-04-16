@@ -1,3 +1,5 @@
+#include "eevdf.h"
+
 // Per-CPU state
 struct cpu {
   uchar apicid;                // Local APIC ID
@@ -42,8 +44,8 @@ struct proc {
   enum procstate state;        // Process state
   int pid;                     // Process ID
   int ticks;
-  int weight;
-  int request_tick;
+  int weight;                  // The priority of the process, ranging from 1 (lowest priority) to 5 (highest priority)
+  int request_tick;            // The total CPU time a process requests (must be greater than 0)
   struct proc *parent;         // Parent process
   struct trapframe *tf;        // Trap frame for current syscall
   struct context *context;     // swtch() here to run process
@@ -52,6 +54,15 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  // eevdf scheduler
+  int virtual_time_init;
+  int virtual_deadline;
+  #if DEBUG_STORE_LAG
+  int lag;                     // doesnt really need to be stored in the PCB but here for debugging
+  #endif
+  int virtual_eligible;
+  int used_time;
 };
 
 // Process memory is laid out contiguously, low addresses first:
