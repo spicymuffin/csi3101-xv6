@@ -508,6 +508,36 @@ void print_scheduler_metadata()
   }
 }
 
+void print_run_candidate(struct proc* p)
+{
+  cprintf("RUN CANDIDATE PID: %d\n", p->pid);
+  cprintf("RUN CANDIDATE NAME: %s\n", p->name);
+  cprintf("RUN CANDIDATE STATE: ");
+  if (p->state == RUNNABLE)
+    cprintf("RUNNABLE\n");
+  else if (p->state == RUNNING)
+    cprintf("RUNNING\n");
+  else if (p->state == SLEEPING)
+    cprintf("SLEEPING\n");
+  cprintf("RUN CANDIDATE VELIGIBLE: ");
+  print_fake_float(p->virtual_eligible);
+  cprintf("\n");
+  cprintf("RUN CANDIDATE VTIME INIT: ");
+  print_fake_float(p->virtual_time_init);
+  cprintf("\n");
+  cprintf("RUN CANDIDATE VDEADLINE: ");
+  print_fake_float(p->virtual_deadline);
+  cprintf("\n");
+  cprintf("RUN CANDIDATE LAG: ");
+  print_fake_float(compute_lag(p));
+  cprintf("\n");
+}
+
+void print_run_candidate_serial(struct proc* p)
+{
+  cprintf("%d", p->pid);
+}
+
 void
 scheduler(void)
 {
@@ -532,6 +562,10 @@ scheduler(void)
       continue;
     }
 
+    print_run_candidate_serial(p);
+
+    // print_run_candidate(p);
+
     // print_scheduler_metadata();
 
     // volatile int i;
@@ -555,7 +589,7 @@ scheduler(void)
 
     // update the virtual params of the process
     eevdf_update_proc(p);
-    print_scheduler_metadata();
+    // print_scheduler_metadata();
 
     // process used one tick NO YOU RETARD
     // p->used_time += 1;
