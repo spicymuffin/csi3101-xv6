@@ -9,6 +9,9 @@
 #include "mmu.h"
 #include "spinlock.h"
 
+int kfree_printflag = 0;
+int kalloc_printflag = 0;
+
 void freerange(void *vstart, void *vend);
 extern char end[]; // first address after kernel loaded from ELF file
                    // defined by the kernel linker script in kernel.ld
@@ -53,6 +56,7 @@ freerange(void *vstart, void *vend)
   for(; p + PGSIZE <= (char*)vend; p += PGSIZE)
     kfree(p);
 }
+
 //PAGEBREAK: 21
 // Free the page of physical memory pointed at by v,
 // which normally should have been returned by a
@@ -63,20 +67,46 @@ kfree(char *v)
 {
   struct run *r;
 
-  if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP)
-    panic("kfree");
+  if((uint)v % PGSIZE || v < end || V2P(v) >= PHYSTOP) panic("kfree");
+
+  if(kmem.use_lock) acquire(&kmem.lock);
+
+  r = (struct run*)v;
+
+  #if DBGMSG_KFREE
+  if (kfree_printflag) {
+    cprintf("[DBGMSG] kfree: attempting freeing page %p\n", r);
+    cprintf("         | refcnt before: %d\n", getrefcnt(V2P(r)));
+    cprintf("         | refcnt after: %d\n", getrefcnt(V2P(r)) - 1);
+  }
+  #endif
+
+  // decrement reference count for the frame
+  decref(V2P(r));
+
+  // if the reference count is zero then we can free the page
+  // meaning we can add it to the free list
+  if (getrefcnt(V2P(r)) > 0) {
+    if(kmem.use_lock) release(&kmem.lock);
+    return;
+  }
 
   // Fill with junk to catch dangling refs.
   memset(v, 1, PGSIZE);
 
-  if(kmem.use_lock)
-    acquire(&kmem.lock);
-  r = (struct run*)v;
+  // insert into beginning of free list
+  // note: order of free list gets scrambled
   r->next = kmem.freelist;
   kmem.freelist = r;
   frees++;
-  if(kmem.use_lock)
-    release(&kmem.lock);
+
+  #if DBGMSG_KFREE
+  if (kfree_printflag) {
+    cprintf("         | refcnt=0, freeing page %p\n", r);
+  }
+  #endif
+
+  if(kmem.use_lock) release(&kmem.lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -87,15 +117,31 @@ kalloc(void)
 {
   struct run *r;
 
-  if(kmem.use_lock)
-    acquire(&kmem.lock);
+  if(kmem.use_lock) acquire(&kmem.lock);
   r = kmem.freelist;
+
+  #if DBGMSG_KALLOC
+  if (kalloc_printflag) {
+    if (r) {
+      cprintf("[DBGMSG] kalloc: allocating page %p\n", r);
+      cprintf("         | refcnt before: %d\n", getrefcnt(V2P(r)));
+      cprintf("         | refcnt after: %d\n", getrefcnt(V2P(r)) + 1);
+    } else {
+      cprintf("[DBGMSG] kalloc: no free pages available\n");
+    }
+  }
+  #endif
+
   if(r) {
     kmem.freelist = r->next;
-	frees--;
+	  frees--;
   }
-  if(kmem.use_lock)
-    release(&kmem.lock);
+
+  if(kmem.use_lock) release(&kmem.lock);
+
+  // increment reference count for the frame
+  // if the frame is not null
+  if (r) incref(V2P(r));
   return (char*)r;
 }
 

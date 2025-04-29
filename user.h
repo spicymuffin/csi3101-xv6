@@ -1,6 +1,12 @@
 struct stat;
 struct rtcdate;
 
+#include "types.h"
+#define	MAP_PROT_READ        0x00000001
+#define MAP_PROT_WRITE       0x00000002
+
+#define MAP_FAILED    (int)((void	*)-1)  // 0xfffffffff.....ff
+
 // system calls
 int fork(void);
 int exit(void) __attribute__((noreturn));
@@ -30,6 +36,7 @@ int nice(int);
 int frees(void);
 void* mmap(int, int , int, int);
 int munmap(const void*, int);
+int vmemlayout(void);
 
 // ulib.c
 int stat(const char*, struct stat*);

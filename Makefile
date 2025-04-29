@@ -184,9 +184,11 @@ UPROGS=\
 	_zombie\
 	_swaptest\
 	_newvmtest\
+	_test\
+	_fr\
 
-fs.img: mkfs README $(UPROGS)
-	./mkfs fs.img README $(UPROGS)
+fs.img: mkfs README mmapfile $(UPROGS)
+	./mkfs fs.img README mmapfile $(UPROGS)
 
 -include *.d
 
@@ -288,6 +290,6 @@ tar:
 	(cd /tmp; tar cf - xv6) | gzip >xv6-rev10.tar.gz  # the next one will be 10 (9/17)
 
 submission:
-	tar -cvf xv6_submission.tar *.c *.h *.S
+	tar -cvf xv6_submission.tar *.c *.h *.S Makefile
 
 .PHONY: dist-test dist submission

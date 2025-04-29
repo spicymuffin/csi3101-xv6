@@ -10,6 +10,16 @@
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
 
+// PHYSTOP = address of the top of physical memory
+#define NPAGE (PHYSTOP / PGSIZE)
+
+struct frameinfo {
+  int refcount; // number of PTEs mapped to this frame
+};
+
+// will hold the reference count of each frame
+struct frameinfo framedata[NPAGE];
+
 // Set up CPU's kernel segment descriptors.
 // Run once on entry on each CPU.
 void
@@ -142,6 +152,14 @@ kvmalloc(void)
 {
   kpgdir = setupkvm();
   switchkvm();
+}
+
+void
+initframedata(void)
+{
+  for(int i = 0; i < NPAGE; i++){
+    framedata[i].refcount = 1;
+  }
 }
 
 // Switch h/w page table register to the kernel-only page table,
@@ -338,6 +356,86 @@ copyuvm(pde_t *pgdir, uint sz)
       goto bad;
     }
   }
+  return d;
+
+bad:
+  freevm(d);
+  return 0;
+}
+
+// better to implement these in kalloc.c but its too late now
+void
+incref(uint pa)
+{
+  framedata[FRAME_IDX(pa)].refcount++;
+}
+
+void
+decref(uint pa)
+{
+  if(framedata[FRAME_IDX(pa)].refcount == 0) panic("decref: refcount is already zero");
+  framedata[FRAME_IDX(pa)].refcount--;
+}
+
+int
+getrefcnt(uint pa)
+{
+  return framedata[FRAME_IDX(pa)].refcount;
+}
+
+// given a parent process's page table, create a COW copy of it for the a child
+// set the PTE_W and PTE_COW bits in both the parent and child page tables
+pde_t*
+cowuvm(pde_t *pgdir, uint sz)
+{
+  pde_t *d;
+  pte_t *pte;
+  uint pa, i, flags;
+
+  // setupkvm() creates and returns a new page directory that maps the kernel portion of the address space
+  if((d = setupkvm()) == 0) return 0;
+
+  // copy the page table entries from the parent process's page table to the child process's page table
+  for(i = 0; i < sz; i += PGSIZE){
+    if((pte = walkpgdir(pgdir, (void *) i, 0)) == 0) panic("cowuvm: pte should exist");
+
+    if(!(*pte & PTE_P)) continue; // page not present (unused) so we skip it
+
+    pa = PTE_ADDR(*pte);
+    flags = PTE_FLAGS(*pte);
+
+    // if the page is readonly, we dont need to make a COW mapping, we can just make a regular
+    // read-only mapping in the child process's page table
+    if ((flags & PTE_W) == 0){
+      if(mappages(d, (void*)i, PGSIZE, pa, flags) < 0){
+        goto bad;
+      }
+
+      // now one more process is using the frame! (i forgot to do this earlier, which caused instability)
+      incref(pa);
+      continue;
+    }
+
+    // commont path: if the page is writable, we need to create a COW mapping
+    // set the PTE_COW bit in the child process's page table
+    flags |= PTE_COW;
+    // unset the PTE_W bit in the child process's page table
+    flags &= ~PTE_W;
+
+    // map the same frame in the child process's page table
+    if(mappages(d, (void*)i, PGSIZE, pa, flags) < 0){
+      goto bad;
+    }
+
+    // set the PTE_COW bit in the parent process's page table
+    *pte |= PTE_COW;
+    // unset the PTE_W bit in the parent process's page table
+    *pte &= ~PTE_W;
+
+    // increment reference count for the frame
+    incref(pa);
+  }
+
   return d;
 
 bad:

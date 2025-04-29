@@ -16,6 +16,9 @@
 #include "file.h"
 #include "fcntl.h"
 
+#include "memlayout.h"
+#include "x86.h"
+
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
 static int
@@ -98,7 +101,46 @@ sys_close(void)
 
   if(argfd(0, &fd, &f) < 0)
     return -1;
-  myproc()->ofile[fd] = 0;
+
+  struct proc* p = myproc();
+
+  #if DBGMSG_SYSCLOSE
+  cprintf("[DBGMSG] sys_close: cycling through %d mmap(s)\n", p->nmmap);
+  cprintf("         | closing file properties:\n");
+  cprintf("         | size: %d\n", f->ip->size);
+  cprintf("         | inum: %d\n", f->ip->inum);
+  #endif
+
+  // cycle through p->ptrs to see if the file was mmaped
+  for(int i = 0; i < p->nmmap; i++){
+    #if DBGMSG_SYSCLOSE
+    cprintf("[DBGMSG] sys_close: comparing with\n", p->nmmap);
+    cprintf("         | compared file properties:\n");
+    cprintf("         | size: %d\n", f->ip->size);
+    cprintf("         | inum: %d\n", f->ip->inum);
+    #endif
+
+    // inode number is unique; use it to test file identicality
+    if(p->ptrs[i]->fd->ip->inum == f->ip->inum){
+      #if DBGMSG_SYSCLOSE
+      cprintf("[DBGMSG] sys_close: found mmap of closing file\n");
+      #endif
+      void* addr = (void*)p->ptrs[i]->addr_low;
+      int size = p->ptrs[i]->size;
+      if(munmap(addr, size) < 0){
+        #if DBGMSG_SYSCLOSE
+        cprintf("[DBGMSG] sys_close: munmap failed\n");
+        #endif
+        return -1;
+      }
+
+      #if DBGMSG_SYSCLOSE
+      cprintf("[DBGMSG] sys_close: munmap successful\n");
+      #endif
+    }
+  }
+
+  p->ofile[fd] = 0;
   fileclose(f);
   return 0;
 }
@@ -467,9 +509,552 @@ int sys_swapwrite(void)
 	return 0;
 }
 
+
+#define	MAP_FAILED    (int)((void	*)-1)  // 0xfffffffff.....ff
+int mmaps_active = 0;
+
+#pragma GCC diagnostic ignored "-Wunknown-pragmas"
+
+#pragma region vmutil
+// Return the address of the PTE in page table pgdir
+// that corresponds to virtual address va.  If alloc!=0,
+// create any required page table pages.
+static pte_t *
+walkpgdir(pde_t *pgdir, const void *va, int alloc)
+{
+  pde_t *pde;
+  pte_t *pgtab;
+
+  pde = &pgdir[PDX(va)];
+  if(*pde & PTE_P){ // if the pgdir 's entry no. PDX(va) is present (the pagetable exists) then just return it
+    pgtab = (pte_t*)P2V(PTE_ADDR(*pde));
+  } else {
+    if(!alloc || (pgtab = (pte_t*)kalloc()) == 0)
+      return 0; // the pagetable didnt exist, and we dont want to create it or we couldnt create it
+
+    // the pagetable didnt exisst, but we were successfull at allocating space for it
+
+    // Make sure all those PTE_P bits are zero.
+    memset(pgtab, 0, PGSIZE);
+    // The permissions here are overly generous, but they can
+    // be further restricted by the permissions in the page table
+    // entries, if necessary.
+    // page directory entry's value is pgtab's base address, obviously
+    *pde = V2P(pgtab) | PTE_P | PTE_W | PTE_U;
+  }
+  return &pgtab[PTX(va)];
+}
+
+// Create PTEs for virtual addresses starting at va that refer to
+// physical addresses starting at pa. va and size might not
+// be page-aligned.
+// page directory, va start, # of entries, pa start, permissions 
+static int
+mappages(pde_t *pgdir, void *va, uint size, uint pa, int perm)
+{
+  char *a, *last;
+  pte_t *pte;
+
+  a = (char*)PGROUNDDOWN((uint)va);
+  last = (char*)PGROUNDDOWN(((uint)va) + size - 1); // -1 because last is on last, so we want last to be last ()
+  // a is virtual address
+  for(;;){
+    if((pte = walkpgdir(pgdir, a, 1)) == 0) // integer argument is one so we are requesting to allocate a page table if the page we want
+                                            // to map corresponds to a pagetable that is not present
+      return -1;
+    if(*pte & PTE_P) // mask off the PTE_P bit literally and if it masks and the bit is one then true else everything is zero so false
+      panic("remap");
+    *pte = pa | perm | PTE_P;
+    if(a == last)
+      break;
+    a += PGSIZE;
+    pa += PGSIZE;
+  }
+
+  flush_tlb(); // Q: is this bad design...? can hardware be "controlled" inside syscalls....?
+
+  return 0;
+}
+
+uint*
+get_pte(struct proc* p, uint va)
+{
+  pte_t* pte;
+  if((pte = walkpgdir(p->pgdir, (void*)va, 0)) == 0){
+    return 0;
+  }
+  return pte;
+}
+#pragma endregion
+
+#pragma region mmaputil
+
+// find a cell in PCB's mmaps to store mmap's data.
+int
+mmap_find_empty_mmap_slot(const struct proc* p)
+{
+  for(int i = 0; i < NPROCMMAP; i++){
+    if(p->mmaps[i].addr_low == -1){
+      return i;
+    }
+  }
+  return -1; // slot not found (this should never happen)
+}
+
+// return the index at which we should insert the new mmap
+// should mark as a mmap to make space for the entire mmap
+//
+// size is the length of the mmap that we are trying to fit
+// after offset and len contraints page alligned. (is a multiple of PGSIZE)
+//
+// returns -1 on search error
+int
+mmap_find_available_memory_block(const struct proc* p, int size)
+{
+  if(p->nmmap == 0){
+    return 0;
+  }
+
+  uint prev_lowest_addr = KERNBASE;
+  uint next_highest_addr = p->ptrs[1]->addr_high;
+
+  cprintf("[DBGMSG] mmap: scanning (KERNBASE; sz] for available memory regions\n");
+
+  for(int i = 1; i <= p->nmmap; i++){
+    #if DBGMSG_MMAP
+    char tmp[11];
+    get_padded_hex_addr(prev_lowest_addr, tmp);
+    cprintf("[DBGMSG] mmap: comparing %s and ");
+    get_padded_hex_addr(next_highest_addr, tmp);
+    cprintf("%s\n");
+    #endif
+    if (prev_lowest_addr - next_highest_addr >= size){
+      return i;
+    }
+    // current map index - 1 is the previous
+    prev_lowest_addr  = p->ptrs[i-1]->addr_low;
+
+    // [MAJOR BUG] this was stupid ig
+
+    // im so retarded the next iteration wont happen hello
+    // if(i == p->nmmap){
+      // first address not allocated by proc
+      // next_highest_addr = p->sz;
+    // }
+    // else{
+      // next mmap in the mmaps_ptr array
+      next_highest_addr = p->ptrs[i]->addr_high;
+    // }
+  }
+
+  // if here we try one last time from the last mmap to sz
+  if (prev_lowest_addr - p->sz >= size){
+    // this is the index of the last mmap
+    return p->nmmap;
+  }
+
+  return -1;
+}
+
+// return the index of the mmap with low_addr addr
+// in the ordered mmap array
+int
+mmap_find_mmap_by_addr_low(const uint addr)
+{
+  struct proc* p = myproc();
+
+  for(int i = 0; i < NPROCMMAP; i++){
+    if(p->ptrs[i]->addr_low == addr){
+      return i;
+    }
+  }
+  return -1; // slot not found
+}
+
+
+// return the index of the mmap with addr
+// in the ordered mmap array
+int
+mmap_find_mmap_by_addr(const uint addr)
+{
+  struct proc* p = myproc();
+
+  for(int i = 0; i < NPROCMMAP; i++){
+    if(p->ptrs[i]->addr_low <= addr && addr < p->ptrs[i]->addr_high){
+      return i;
+    }
+  }
+  return -1; // slot not found
+}
+
+// find the index of the mmap with low addr
+// addr in the ptrs array
+int
+mmap_find_ptr_indx(const uint addr)
+{
+  struct proc* p = myproc();
+
+  for(int i = 0; i < p->nmmap; i++){
+    if(addr == p->ptrs[i]->addr_low){
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+#pragma endregion
+
 int mmap(struct file* f, int off, int len, int flags)
 {
-	return -1;
+  acquire_ptable_lock();
+
+  struct proc* p = myproc();
+
+  // file descriptor is improper (1)
+  if(f < 0){
+    #if DBGMSG_MMAP
+    cprintf("[DBGMSG] mmap: failed - improper filedescriptor (f < 0)\n");
+    #endif
+    return MAP_FAILED;
+  }
+  // file descriptor is improper (2)
+  if(p->ofile[(int)f] == 0){
+    #if DBGMSG_MMAP
+    cprintf("[DBGMSG] mmap: failed - improper filedescriptor (ofile ref is null)\n");
+    #endif
+    release_ptable_lock();
+    return MAP_FAILED;
+  }
+  // file is not readable
+  if(!f->readable){
+    #if DBGMSG_MMAP
+    cprintf("[DBGMSG] mmap: failed - file unreadable\n");
+    #endif
+    release_ptable_lock();
+    return MAP_FAILED;
+  }
+  // proc has filled mmap quota
+  if(p->nmmap >= NPROCMMAP){
+    #if DBGMSG_MMAP
+    cprintf("[DBGMSG] mmap: failed - proc has filled mmap quota\n");
+    #endif
+    release_ptable_lock();
+    return MAP_FAILED;
+  }
+  // system has filled mmap quota
+  if(mmaps_active >= NSYSMMAP){
+    #if DBGMSG_MMAP
+    cprintf("[DBGMSG] mmap: failed - system has filled mmap quota\n");
+    #endif
+    release_ptable_lock();
+    return MAP_FAILED;
+  }
+
+  // find allocation size in pagetable multiples
+  // can potentially overflow, so need to check later again
+  int pgalligned_true_mmap_size = ((len + (PGSIZE - 1)) / PGSIZE) * PGSIZE;
+  #if DBGMSG_MMAP
+  cprintf("[DBGMSG] mmap: allocation size=%d\n", pgalligned_true_mmap_size);
+  #endif
+
+  // find a big enough memory block
+  int indx = mmap_find_available_memory_block(p, pgalligned_true_mmap_size);
+
+  if(indx == -1){
+    #if DBGMSG_MMAP
+    cprintf("[DBGMSG] mmap: couldnt find available memory_block\n");
+    #endif
+    release_ptable_lock();
+    return MAP_FAILED;
+  }
+
+  // shouldnt fail bc we already checked that we have slots
+  int mmapslot = mmap_find_empty_mmap_slot(p);
+
+  if(mmapslot == -1){
+    panic("mmap");
+  }
+
+  // establish a reference to a mmap struct in the PCB
+  p->ptrs[indx] = &(p->mmaps[mmapslot]);
+
+  // shift ptrs after index by one to right
+  struct mmapdata* cache = p->ptrs[indx];
+  struct mmapdata* tmp;
+
+  // we at most have 3 mmaps so we can go beyond p->nmmap by one
+  for(int i = indx + 1; i < p->nmmap + 1; i++){
+    tmp = p->ptrs[i];
+    p->ptrs[i] = cache;
+    cache = tmp;
+  }
+
+  // previous mmap's lowest address
+  uint prev_lowest_addr;
+
+  // find start addr based on indx
+  if(indx == 0){
+    #if DBGMSG_MMAP
+    cprintf("[DBGMSG] mmap: mmap is first by proc\n");
+    #endif
+    // if this mmap is first, previous lowest address is KERNBASE
+    prev_lowest_addr = KERNBASE;
+  }
+  else{
+    #if DBGMSG_MMAP
+    cprintf("[DBGMSG] mmap: mmap is %dth\n", indx);
+    #endif
+    // if it is not zero, then there is a map that comes before it
+    prev_lowest_addr = p->ptrs[indx - 1]->addr_low;
+  }
+
+  #if DBGMSG_MMAP
+  char charbuf[11];
+  get_padded_hex_addr(prev_lowest_addr, charbuf);
+  cprintf("[DBGMSG] mmap: prev_lowest_addr=%s\n", charbuf);
+  #endif
+
+  // mmap is created
+  p->nmmap++;
+  mmaps_active++;
+
+  // store mmapdata into PCB for lazyalloc
+  p->ptrs[indx]->addr_low = prev_lowest_addr - pgalligned_true_mmap_size; // find the start address of this mmap
+  p->ptrs[indx]->addr_high = prev_lowest_addr;
+  p->ptrs[indx]->size = len; // note: not page alligned just the length of the contents
+  p->ptrs[indx]->fd = f;
+  p->ptrs[indx]->flags = flags;
+  p->ptrs[indx]->offset = off;
+
+  #if DBGMSG_MMAP
+  get_padded_hex_addr(p->ptrs[indx]->addr_low, charbuf);
+  cprintf("[DBGMSG] mmap: adrr_low=%s\n", charbuf);
+  get_padded_hex_addr(p->ptrs[indx]->addr_high, charbuf);
+  cprintf("[DBGMSG] mmap: adrr_high=%s\n", charbuf);
+
+  cprintf("[DBGMSG] mmap: assert mmap's addr_low is page aligned=%d\n", p->ptrs[indx]->addr_low == PGROUNDDOWN(p->ptrs[indx]->addr_low));
+  #endif
+
+  // allocate fully the memblock (change later)
+  char *mem;
+  uint a = p->ptrs[indx]->addr_low;
+
+  for(; a < p->ptrs[indx]->addr_high; a += PGSIZE){ // keep in mind that += PGSIZE is run after the condition is checked lol
+    // this is allocating a page literally. we will check later if it is mapped or not
+    mem = kalloc(); // allocate a page somewhere in phys mem, return PA to store in mem
+    if(mem == 0){ // kalloc failed
+      #if DBGMSG_MMAP
+      cprintf("[DBGMSG] mmap: allocuvm out of memory\n");
+      #endif
+      release_ptable_lock();
+      // cleanup mmap struct
+      /// TODO: cleanup ordering in p->ptrs and so on
+      return MAP_FAILED;
+    }
+
+    int pteflags = 0;
+    pteflags |= PTE_U; // set user bit to 1
+    pteflags |= PTE_P;
+
+    /// TODO: weird read write semantics, needs clarification
+
+    // if the mmap is not writable, we leave the PTE_W bit unset
+    if(flags & MAP_PROT_WRITE){
+      pteflags |= PTE_W;
+    }
+
+    memset(mem, 0, PGSIZE); // zero out the page we just allocated with kalloc()
+    if(mappages(p->pgdir, (char*)a, PGSIZE, V2P(mem), pteflags) < 0){ // map the single page that we allocated (create pte if needed and etc.)
+                                                                      // set writable and set user bits to 1
+                                                                      // we can use v2p bc page tables, directories are stored in the kernel (so after kernbase in the vram)
+      #if DBGMSG_MMAP
+      cprintf("[DBGMSG] mmap: allocuvm out of memory (2)\n");
+      #endif
+      kfree(mem);
+      release_ptable_lock();
+      // cleanup mmap struct
+      /// TODO: actually cleanup
+      return MAP_FAILED;
+    }
+  }
+
+  #if DBGMSG_MMAP
+  cprintf("[DBGMSG] mmap: allocated frames for mmap\n");
+  #endif
+
+  #if DBGMSG_MMAP
+  cprintf("[DBGMSG] mmap: reading from file\n");
+  #endif
+
+  // done modifying the ptable, now we can unlock it
+  // (we also need to do this bc readi will try to acquire the ptable lock, which kills the OS)
+  release_ptable_lock();
+
+  ilock(f->ip);
+  // read the file into the mmap
+  if(readi(f->ip, (char*)p->ptrs[indx]->addr_low, off, len) == -1){
+    #if DBGMSG_MMAP
+    cprintf("[DBGMSG] mmap: readi failed\n");
+    #endif
+    // we are not going to implement this since we will probably never reach this point
+    // cleanup mmap struct
+    // cleanup ordering in p->ptrs
+    p->nmmap--;
+    mmaps_active--;
+
+    iunlock(f->ip);
+    /// TODO: actually cleanup
+    return MAP_FAILED;
+  }
+	iunlock(f->ip);
+
+  #if DBGMSG_MMAP
+  cprintf("[DBGMSG] mmap: read fileread successful\n");
+  cprintf("[DBGMSG] mmap: is upper addr equal to KERNBASE?=%d\n", KERNBASE == p->ptrs[indx]->addr_high);
+  #endif
+
+  // return map start address
+  return p->ptrs[indx]->addr_low;
+}
+
+int munmap(void* ptr, int len)
+{
+  acquire_ptable_lock();
+  struct proc* p = myproc();
+  // ptr can be wherever inside a mmap
+  int indx = mmap_find_mmap_by_addr((uint)ptr);
+
+  // if addr is not a multiple of PGSIZE return -1 (idk why)
+  if((uint)ptr % PGSIZE != 0){
+    #if DBGMSG_MUNMAP
+    cprintf("[DBGMSG] munmap: failed - addr is not a multiple of PGSIZE\n");
+    #endif
+    release_ptable_lock();
+    return -1;
+  }
+
+  // if indx is -1 (low addr not found) then the call is illegal
+  if(indx == -1){
+    #if DBGMSG_MUNMAP
+    cprintf("[DBGMSG] munmap: failed - addr indx is -1\n");
+    #endif
+    release_ptable_lock();
+    return -1;
+  }
+
+  // check whether the length argument is valid
+  struct mmapdata* mmpdt = p->ptrs[indx];
+
+  // cache fd for writeback later
+
+  uint caddr_low = mmpdt->addr_low;
+  uint caddr_high = mmpdt->addr_high;
+  uint csize = mmpdt->size;
+  struct file* cfd = mmpdt->fd;
+  // uint cflags = mmpdt->flags;
+  uint coffset = mmpdt->offset;
+
+  // check if the length is valid
+  if(len != mmpdt->size){
+    #if DBGMSG_MUNMAP
+    cprintf("[DBGMSG] munmap: length arg doesn't match original length\n");
+    cprintf("         | %d != %d (written != provided)\n", mmpdt->size, len);
+    #endif
+    release_ptable_lock();
+    return -1;
+  }
+
+  mmpdt->addr_low = -1;
+  mmpdt->addr_high = -1;
+  mmpdt->size = -1;
+  mmpdt->fd = 0;
+  mmpdt->flags = -1;
+  mmpdt->offset = -1;
+
+  // cleanup the ordered array by finding the first mmap that has a -1 low addr (thats the one we just unmapped)
+  // it also might be the last one, which doesnt matter because then we will just shift unallocated maps
+  int ptr_indx = mmap_find_ptr_indx(mmpdt->addr_low);
+
+  // [MAJOR BUG] idk how this happened
+
+  // i legit have no idea why this was here before maybe i was doing some tests and left this here
+  // (i swear im smart please believe me :c)
+  // ptr_indx = 0;
+
+  #if DBGMSG_MUNMAP
+  cprintf("[DBGMSG] munmap: ptr_indx=%d\n", ptr_indx);
+  #endif
+
+  for(int i = ptr_indx; i < p->nmmap; i++){
+    struct mmapdata* tmp = p->ptrs[i];
+    p->ptrs[i] = p->ptrs[i+1];
+    p->ptrs[i+1] = tmp;
+  }
+
+  mmaps_active--;
+  p->nmmap--;
+
+  // done modifying the ptable, now we can unlock it
+  release_ptable_lock();
+
+  // write dirty pages back
+  uint current_page_addr_low = caddr_low;
+  uint pa;
+
+  begin_op();
+  ilock(cfd->ip);
+  for(; current_page_addr_low < caddr_high; current_page_addr_low += PGSIZE){
+    pte_t* pte = get_pte(p, current_page_addr_low);
+    uint current_page_addr_high = current_page_addr_low + PGSIZE;
+
+    if(pte == 0){
+      // PTE doesnt exist, go next..?
+      continue;
+    }
+
+    if(!(*pte & PTE_P)){
+      // page not present
+      continue;
+    }
+
+    if(*pte & PTE_D){
+      // write but respect file length (or smt idk i did this when i was debugging but it doesnt matter)
+      if(writei(cfd->ip,
+                (char*)current_page_addr_low,
+                current_page_addr_low - caddr_low + coffset,
+                (current_page_addr_high == caddr_high ? (csize % PGSIZE) : (PGSIZE))) < 0){
+        #if DBGMSG_MUNMAP
+        cprintf("[DBGMSG] munmap: writei failed\n");
+        #endif
+        iunlock(cfd->ip);
+        end_op();
+        release_ptable_lock();
+        return -1;
+      }
+
+      #if DBGMSG_MUNMAP
+      cprintf("[DBGMSG] munmap: writei wrote data to disk\n");
+      #endif
+    }
+    // free the page and delete pte
+    pa = PTE_ADDR(*pte);
+
+    // if physical pointed by the PTE is zero
+    if(pa == 0) panic("kfree");
+
+    // convert to virtual with p2v bc we are in kernelspace
+    char *v = P2V(pa);
+    // free the pageframe pointed to by the va
+    kfree(v);
+    *pte = 0;
+  }
+  flush_tlb(); // Q: is this bad design...? can hardware be "controlled" inside syscalls....?
+
+  iunlock(cfd->ip);
+  end_op();
+
+  return 0;
 }
 
 int sys_mmap(void)
@@ -480,11 +1065,6 @@ int sys_mmap(void)
 			argint(2, &len) < 0 || argint(3, &flags) < 0 )
 		return -1;
 	return mmap(f, off, len, flags);
-}
-
-int munmap(void* ptr, int len)
-{
-	return -1;
 }
 
 int sys_munmap(void)

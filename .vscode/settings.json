@@ -1,0 +1,15 @@
+{
+    "files.associations": {
+        "*.py": "python",
+        "memlayout.h": "c",
+        "random": "c",
+        "fcntl.h": "c",
+        "file.h": "c",
+        "stat.h": "c",
+        "defs.h": "c",
+        "user.h": "c",
+        "types.h": "c",
+        "atomic": "c",
+        "spinlock.h": "c"
+    }
+}

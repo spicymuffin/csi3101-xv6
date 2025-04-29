@@ -32,7 +32,18 @@ struct context {
   uint eip;
 };
 
+
+
 enum procstate { UNUSED, EMBRYO, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };
+
+struct mmapdata {
+  uint addr_low;               // Lowest address of the mmaping
+  uint addr_high;              // Highest address of the mmapping + 1
+  int size;                    // Length of the actual data
+  struct file* fd;             // File that we are mapping (so we can demand page later)
+  int flags;
+  int offset;
+};
 
 // Per-process state
 struct proc {
@@ -50,6 +61,9 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+  int nmmap;                   // # Of mmaps created by process
+  struct mmapdata* ptrs[4];    // Pointers to mmaps (ordered)
+  struct mmapdata mmaps[4];    // Memory maps created by process
 };
 
 // Process memory is laid out contiguously, low addresses first:

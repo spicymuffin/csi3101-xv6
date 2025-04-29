@@ -68,6 +68,8 @@ char*           kalloc(void);
 void            kfree(char*);
 void            kinit1(void*, void*);
 void            kinit2(void*, void*);
+extern int      kfree_printflag;
+extern int      kalloc_printflag;
 
 // kbd.c
 void            kbdintr(void);
@@ -121,6 +123,10 @@ int             wait(void);
 void            wakeup(void*);
 void            yield(void);
 int 			nice(int);
+void            get_padded_hex_addr(uint addr, char* buf);
+int             vmemlayout(void);
+void            acquire_ptable_lock(void);
+void            release_ptable_lock(void);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -181,11 +187,19 @@ int             deallocuvm(pde_t*, uint, uint);
 void            freevm(pde_t*);
 void            inituvm(pde_t*, char*, uint);
 int             loaduvm(pde_t*, char*, struct inode*, uint, uint);
-pde_t*          copyuvm(pde_t*, uint);
+pde_t*          cowuvm(pde_t*, uint);
 void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
 void            clearpteu(pde_t *pgdir, char *uva);
+void            incref(uint pa);
+void            decref(uint pa);
+int             getrefcnt(uint pa);
+void            initframedata(void);
+
+// sysfile.c
+uint*           get_pte(struct proc* p, uint va);
+int             munmap(void* ptr, int len);
 
 // swap.c
 void swapread(char* ptr, int blkno);

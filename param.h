@@ -10,5 +10,22 @@
 #define MAXOPBLOCKS  10  // max # of blocks any FS op writes
 #define LOGSIZE      (MAXOPBLOCKS*3)  // max data blocks in on-disk log
 #define NBUF         (MAXOPBLOCKS*3)  // size of disk block cache
-#define FSSIZE       1000  // size of file system in blocks
+#define FSSIZE       2500  // size of file system in blocks
 
+#define NSYSMMAP     16  // maximum number of mmaped files in system
+#define NPROCMMAP     4  // maximum number of mmaped files per proc
+
+// DBG params
+#define DBGMSG_LAZYALLOC      1 // lazyalloc's debug messages
+#define DBGMSG_PAGEFAULT      1 // pgflt trap handler's debug messages
+#define DBGMSG_MMAP           1 // mmap debug messages
+#define DBGMSG_MUNMAP         1 // munmap debug messages
+#define DBGMSG_EXEC           1 // exec debug messages
+#define DBGMSG_SBRK           1 // sbrk debug messages
+#define DBGMSG_SYSCLOSE       1 // sys_close debug messages
+#define DBGMSG_EXIT           1 // exit debug messages
+#define DMGMSG_LOAD_EXECTBL   1 // load_executable debug messages
+
+// #define DBGMSG_KALLOC         1 // kalloc debug messages
+// #define DBGMSG_KFREE          1 // kfree debug messages
+#define DBGMSG_FORK           1 // fork debug messages
