@@ -1,0 +1,12 @@
+{
+    "files.associations": {
+        "*.py": "python",
+        "proc.h": "c",
+        "param.h": "c",
+        "defs.h": "c",
+        "memlayout.h": "c",
+        "x86.h": "c",
+        "mmu.h": "c",
+        "user.h": "c"
+    }
+}

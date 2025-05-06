@@ -120,6 +120,18 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+int 		    sched_setattr(int, int);
+int 		    sched_getattr(int*, int*);
+
+int             compute_virtual_eligible(struct proc*);
+int             compute_virtual_deadline(struct proc*);
+int             compute_lag(struct proc*);
+
+void            eevdf_enqueue_process(struct proc*);
+void            eevdf_update_proc(struct proc*);
+void            update_virtual_time();
+
+void            print_scheduler_metadata();
 
 // swtch.S
 void            swtch(struct context**, struct context*);
