@@ -25,6 +25,7 @@ int sleep(int);
 int uptime(void);
 int swapread(const char*, int);
 int swapwrite(const char*, int);
+uint baddr(int fd, int offset);
 
 // ulib.c
 int stat(const char*, struct stat*);

@@ -53,6 +53,8 @@ int             readi(struct inode*, char*, uint, uint);
 void            stati(struct inode*, struct stat*);
 int             writei(struct inode*, char*, uint, uint);
 
+uint            baddr(struct file* f, int offset);
+
 // ide.c
 void            ideinit(void);
 void            ideintr(void);

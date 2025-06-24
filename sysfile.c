@@ -103,6 +103,18 @@ sys_close(void)
   return 0;
 }
 
+
+int
+sys_baddr(void)
+{
+  struct file *f;
+  int off;
+
+  if(argfd(0, 0, &f) < 0 || argint(1, &off) < 0) return -1;
+  return (int)baddr(f, off);
+}
+
+
 int
 sys_fstat(void)
 {

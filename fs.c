@@ -21,6 +21,14 @@
 #include "buf.h"
 #include "file.h"
 
+#define DEBUG_BMAP
+
+#ifdef DEBUG_BMAP
+# define DPRINTF(...)  cprintf(__VA_ARGS__)
+#else
+# define DPRINTF(...)
+#endif
+
 #define min(a, b) ((a) < (b) ? (a) : (b))
 static void itrunc(struct inode*);
 // there should be one superblock per disk device, but we run with
@@ -168,6 +176,7 @@ struct {
   struct inode inode[NINODE];
 } icache;
 
+// initializes the inode cache for the given device
 void
 iinit(int dev)
 {
@@ -178,6 +187,7 @@ iinit(int dev)
     initsleeplock(&icache.inode[i].lock, "inode");
   }
 
+  // read superblock
   readsb(dev, &sb);
   cprintf("sb: size %d nblocks %d ninodes %d nlog %d logstart %d\
  inodestart %d bmap start %d\n", sb.size, sb.nblocks,
@@ -369,34 +379,166 @@ iunlockput(struct inode *ip)
 
 // Return the disk block address of the nth block in inode ip.
 // If there is no such block, bmap allocates one.
+
+// bn is the logical block number in the file,
+// ip is the inode struct pointer for the file
 static uint
 bmap(struct inode *ip, uint bn)
 {
   uint addr, *a;
-  struct buf *bp;
+  struct buf *bp, *dbp;
+  uint origbn = bn;
 
   if(bn < NDIRECT){
-    if((addr = ip->addrs[bn]) == 0)
+    if((addr = ip->addrs[bn]) == 0) {
       ip->addrs[bn] = addr = balloc(ip->dev);
+      DPRINTF("bmap: inum %d  lb %d  alloc DIRECT      -> blk %d\n", ip->inum, origbn, addr);
+    }
+    else {
+      DPRINTF("bmap: inum %d  lb %d  DIRECT            -> blk %d\n", ip->inum, origbn, addr);
+    }
     return addr;
   }
   bn -= NDIRECT;
 
   if(bn < NINDIRECT){
     // Load indirect block, allocating if necessary.
-    if((addr = ip->addrs[NDIRECT]) == 0)
+    if((addr = ip->addrs[NDIRECT]) == 0) {
       ip->addrs[NDIRECT] = addr = balloc(ip->dev);
+      DPRINTF("bmap: inum %d  lb %d  alloc S-IND IDX   -> blk %d\n", ip->inum, origbn, addr);
+    }
     bp = bread(ip->dev, addr);
     a = (uint*)bp->data;
     if((addr = a[bn]) == 0){
       a[bn] = addr = balloc(ip->dev);
       log_write(bp);
+      DPRINTF("bmap: inum %d  lb %d  alloc S-IND DATA  -> blk %d\n", ip->inum, origbn, addr);
+    }
+    else {
+      DPRINTF("bmap: inum %d  lb %d  S-IND DATA        -> blk %d\n", ip->inum, origbn, addr);
     }
     brelse(bp);
     return addr;
   }
+  bn -= NINDIRECT;
+
+  // bread to load the block into mem
+  // modify the block in memory
+  // bwrite to write the block to disk
+  // brelse to release the block
+
+  if(bn < NDOUBLEINDIRECT){
+    // allocate the double indirect block if necessary
+    if((addr = ip->addrs[NDIRECT + 1]) == 0) {
+      ip->addrs[NDIRECT + 1] = addr = balloc(ip->dev);
+      DPRINTF("bmap: inum %d  lb %d  alloc D-IND L1    -> blk %d\n", ip->inum, origbn, addr);
+    }
+
+    // load the double indirect block
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+
+    uint l1idx = bn / NINDIRECT;
+
+    // figure out which single indirect block to use, try to load it
+    addr = a[l1idx];
+    // allocate the single indirect block if necessary
+    if(addr == 0){
+      a[l1idx] = addr = balloc(ip->dev);
+      log_write(bp);
+      DPRINTF("bmap: inum %d  lb %d  alloc D-IND L2    -> blk %d (idx %d)\n", ip->inum, origbn, addr, l1idx);
+    }
+
+    dbp = bread(ip->dev, addr);
+    a = (uint*)dbp->data;
+
+    uint l2idx = bn % NINDIRECT;
+
+    // now we have the single indirect block, figure out which block to use inside it
+    addr = a[l2idx];
+    // if the block is not allocated, allocate it
+    if(addr == 0){
+      a[l2idx] = addr = balloc(ip->dev);
+      log_write(dbp);
+      DPRINTF("bmap: inum %d  lb %d  alloc D-IND DATA  -> blk %d (idx %d,%d)\n", ip->inum, origbn, addr, l1idx, l2idx);
+    } else {
+      DPRINTF("bmap: inum %d  lb %d  D-IND DATA        -> blk %d (idx %d,%d)\n", ip->inum, origbn, addr, l1idx, l2idx);
+    }
+
+    brelse(bp);
+    brelse(dbp);
+    return addr;
+  }
 
   panic("bmap: out of range");
+}
+
+uint
+baddr(struct file* f, int offset)
+{
+  if(offset < 0) return -1;
+  struct inode *ip = f->ip;
+  uint bn = offset / BSIZE;
+  uint addr, *a;
+  struct buf *bp, *dbp;
+
+  ilock(ip);
+
+  if(bn < NDIRECT){
+    addr = ip->addrs[bn];
+    iunlock(ip);
+    // return -1 if addr is 0, otherwise return addr
+    return addr ? addr : -1;
+  }
+
+  bn -= NDIRECT;
+
+  if(bn < NINDIRECT){
+    if((addr = ip->addrs[NDIRECT]) == 0){
+      iunlock(ip);
+      // no indirect block
+      return -1;
+    }
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    addr = a[bn];
+    brelse(bp);
+    iunlock(ip);
+    // return -1 if addr is 0
+    return addr ? addr : -1;
+  }
+
+  bn -= NINDIRECT;
+
+  if(bn < NDOUBLEINDIRECT){
+    addr = ip->addrs[NDIRECT+1];
+    if(addr == 0){
+      iunlock(ip);
+      // no double indirect block
+      return -1;
+    }
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+    addr = a[bn / NINDIRECT];
+    if(addr == 0){
+      brelse(bp);
+      iunlock(ip);
+      // no single indirect block
+      return -1;
+    }
+    dbp = bread(ip->dev, addr);
+    a   = (uint*)dbp->data;
+    addr = a[bn % NINDIRECT];
+    brelse(bp);
+    brelse(dbp);
+    iunlock(ip);
+    // return -1 if addr is 0, otherwise return addr
+    return addr ? addr : -1;
+  }
+
+  // block is too far
+  iunlock(ip);
+  return -1;
 }
 
 // Truncate inode (discard contents).
@@ -428,6 +570,43 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+  // if the double indirect block is allocated, free it
+  if (ip->addrs[NDIRECT + 1]){
+    // read the double indirect block
+    bp = bread(ip->dev, ip->addrs[NDIRECT + 1]);
+    a = (uint*)bp->data;
+
+    // iterate through the singly-indirect blocks in it
+    for(i = 0; i < NINDIRECT; i++){
+      // if the singly-indirect block is allocated, free it
+      if(a[i]){
+        // read the singly-indirect block
+        struct buf *sbp = bread(ip->dev, a[i]);
+        uint *sa = (uint*)sbp->data;
+
+        // iterate through the data blocks in the singly-indirect block
+        // and free them
+        for(j = 0; j < NINDIRECT; j++){
+          if(sa[j]){
+            bfree(ip->dev, sa[j]);
+          }
+        }
+
+        // free the singly-indirect block itself
+        brelse(sbp);
+        bfree(ip->dev, a[i]);
+      }
+    }
+
+    // free the double indirect block itself
+    brelse(bp);
+    bfree(ip->dev, ip->addrs[NDIRECT + 1]);
+
+    // clean up the inode's address array entry
+    // for the double indirect block
+    ip->addrs[NDIRECT + 1] = 0;
   }
 
   ip->size = 0;
